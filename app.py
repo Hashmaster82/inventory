@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 from datetime import datetime
 import webbrowser
-from fpdf import FPDF  # Импорт FPDF для PDF создания
+from fpdf import FPDF
 import tkinter.font as tkFont
 
 
@@ -20,7 +20,6 @@ class InventoryApp:
         self.root.title("Система инвентаризации оборудования")
         self.root.state('zoomed')
 
-        # Создаем глобальный шрифт для всего приложения
         self.default_font = tkFont.Font(family='Arial', size=14)
         self.root.option_add("*Font", self.default_font)
 
@@ -62,10 +61,8 @@ class InventoryApp:
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill='both', expand=True)
 
-        # Настройка стиля вкладок и текста
         style = ttk.Style()
         style.configure('Big.TButton', font=('Arial', 18, 'bold'))
-
         style.configure('TNotebook.Tab', font=('Arial', 16, 'bold'), padding=[20, 10])
 
         self.add_frame = ttk.Frame(self.notebook)
@@ -98,13 +95,10 @@ class InventoryApp:
             ("Дата", "date"),
             ("Комментарии", "comments")
         ]
-
         self.entries = {}
-
         for i, (label_text, field_name) in enumerate(fields):
             label = ttk.Label(self.add_frame, text=label_text + ":")
             label.grid(row=i, column=0, sticky='w', padx=10, pady=5)
-
             if field_name == "comments":
                 entry = scrolledtext.ScrolledText(self.add_frame, width=40, height=4, font=self.default_font)
                 entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
@@ -115,7 +109,6 @@ class InventoryApp:
             else:
                 entry = ttk.Entry(self.add_frame, width=40, font=self.default_font)
                 entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
-
             self.entries[field_name] = entry
 
         add_button = ttk.Button(self.add_frame, text="Добавить оборудование",
@@ -137,7 +130,7 @@ class InventoryApp:
         self.search_tree = ttk.Treeview(self.search_frame, columns=columns, show='headings', height=15)
 
         for col in columns:
-            self.search_tree.heading(col, text=col)
+            self.search_tree.heading(col, text=col, command=lambda _col=col: self.treeview_sort_column(self.search_tree, _col, False))
             self.search_tree.column(col, width=150, anchor='center')
 
         self.search_tree.bind('<Double-1>', self.on_tree_double_click)
@@ -176,7 +169,7 @@ class InventoryApp:
         self.employee_tree = ttk.Treeview(self.employee_frame, columns=columns, show='headings', height=15)
 
         for col in columns:
-            self.employee_tree.heading(col, text=col)
+            self.employee_tree.heading(col, text=col, command=lambda _col=col: self.treeview_sort_column(self.employee_tree, _col, False))
             self.employee_tree.column(col, width=150, anchor='center')
 
         self.employee_tree.bind('<Double-1>', self.on_tree_double_click)
@@ -206,7 +199,7 @@ class InventoryApp:
         self.all_tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=20)
 
         for col in columns:
-            self.all_tree.heading(col, text=col)
+            self.all_tree.heading(col, text=col, command=lambda _col=col: self.treeview_sort_column(self.all_tree, _col, False))
             self.all_tree.column(col, width=150, anchor='center')
 
         self.all_tree.bind('<Double-1>', self.on_tree_double_click)
@@ -238,7 +231,7 @@ class InventoryApp:
         Разработано: Разин Григорий
 
         Контактная информация:
-        Email: [lantester35@gmail.com](mailto:lantester35@gmail.com)
+        Email: lantester35@gmail.com
 
         Функционал:
         - Ведение учета оборудования
@@ -257,7 +250,43 @@ class InventoryApp:
         close_button = ttk.Button(center_frame, text="Закрыть", command=self.root.quit, style='Big.TButton')
         close_button.pack(pady=10)
 
-    # остальные методы без изменений (оставлены как были)...
+    def treeview_sort_column(self, tree, col, reverse):
+        date_columns = ['Дата']
+        int_columns = []
+
+        def sort_key(val):
+            if col in date_columns:
+                try:
+                    return datetime.strptime(val, "%d.%m.%Y")
+                except:
+                    return datetime.min
+            elif col in int_columns:
+                try:
+                    return int(val)
+                except:
+                    return -1
+            else:
+                return val.lower() if isinstance(val, str) else val
+
+        data = [(tree.set(k, col), k) for k in tree.get_children('')]
+        data.sort(key=lambda t: sort_key(t[0]), reverse=reverse)
+
+        for index, (_, k) in enumerate(data):
+            tree.move(k, '', index)
+
+        serial_col = 'Серийный номер' if 'Серийный номер' in tree['columns'] else 'serial_number'
+
+        sorted_serials = [tree.set(k, serial_col) for _, k in data]
+
+        new_inventory = []
+        for serial in sorted_serials:
+            for item in self.inventory_data:
+                if item.get('serial_number') == serial:
+                    new_inventory.append(item)
+                    break
+        self.inventory_data = new_inventory
+
+        tree.heading(col, command=lambda: self.treeview_sort_column(tree, col, not reverse))
 
     def show_context_menu(self, event):
         tree = event.widget
@@ -487,22 +516,43 @@ class InventoryApp:
             pdf.cell(0, 10, f"Количество сотрудников с оборудованием: {unique_employees}", 0, 1)
             pdf.ln(10)
 
-            pdf.set_font("ChakraPetch", '', 12)
             columns = ["Тип", "Модель", "Серийный номер", "Закрепление", "Дата", "Комментарии"]
-            col_widths = [30, 35, 40, 35, 25, 45]
 
+            # Подготавливаем данные для вычисления ширины колонок
+            data_rows = []
+            for item in self.inventory_data:
+                row = [
+                    item.get('equipment_type', '') or '-',
+                    item.get('model', '') or '-',
+                    item.get('serial_number', '') or '-',
+                    item.get('assignment', '') or '-',
+                    item.get('date', '') or '-',
+                    (item.get('comments', '')[:50] + '...') if item.get('comments') and len(item.get('comments')) > 50 else (item.get('comments', '') or '-')
+                ]
+                data_rows.append(row)
+
+            pdf.set_font("ChakraPetch", '', 12)
+            col_widths = []
+            # Вычисляем максимальную ширину для каждой колонки
+            for col_index in range(len(columns)):
+                max_width = pdf.get_string_width(columns[col_index]) + 6  # padding
+                for row in data_rows:
+                    w = pdf.get_string_width(str(row[col_index])) + 6  # padding
+                    if w > max_width:
+                        max_width = w
+                col_widths.append(max_width)
+
+            # Выводим заголовки
+            pdf.set_font("ChakraPetch", '', 14)
             for i, col in enumerate(columns):
                 pdf.cell(col_widths[i], 10, col, 1, 0, 'C')
             pdf.ln()
 
-            pdf.set_font("ChakraPetch", '', 10)
-            for item in self.inventory_data:
-                pdf.cell(col_widths[0], 10, item.get('equipment_type', '')[:20] or '-', 1)
-                pdf.cell(col_widths[1], 10, item.get('model', '')[:20] or '-', 1)
-                pdf.cell(col_widths[2], 10, item.get('serial_number', '')[:15] or '-', 1)
-                pdf.cell(col_widths[3], 10, item.get('assignment', '')[:15] or '-', 1)
-                pdf.cell(col_widths[4], 10, item.get('date', '')[:10] or '-', 1)
-                pdf.cell(col_widths[5], 10, item.get('comments', '')[:25] or '-', 1)
+            # Выводим данные
+            pdf.set_font("ChakraPetch", '', 12)
+            for row in data_rows:
+                for i, cell_text in enumerate(row):
+                    pdf.cell(col_widths[i], 10, str(cell_text), 1)
                 pdf.ln()
 
             desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
@@ -535,18 +585,29 @@ class InventoryApp:
             pdf.ln(10)
 
             columns = ["Тип", "Модель", "Серийный номер", "Закрепление", "Дата", "Комментарии"]
-            col_widths = [30, 35, 40, 35, 25, 45]
 
+            # Собираем данные из дерева поиска
+            data_rows = [self.search_tree.item(item, 'values') for item in items]
+
+            pdf.set_font("ChakraPetch", '', 12)
+            col_widths = []
+            for col_index in range(len(columns)):
+                max_width = pdf.get_string_width(columns[col_index]) + 6
+                for row in data_rows:
+                    w = pdf.get_string_width(str(row[col_index])) + 6
+                    if w > max_width:
+                        max_width = w
+                col_widths.append(max_width)
+
+            pdf.set_font("ChakraPetch", '', 14)
             for i, col in enumerate(columns):
                 pdf.cell(col_widths[i], 10, col, 1, 0, 'C')
             pdf.ln()
 
-            pdf.set_font("ChakraPetch", '', 9)
-            for item in items:
-                values = self.search_tree.item(item, 'values')
-                for i, val in enumerate(values):
-                    text = val if val else '-'
-                    pdf.cell(col_widths[i], 10, str(text)[:30], 1)
+            pdf.set_font("ChakraPetch", '', 12)
+            for row in data_rows:
+                for i, cell_text in enumerate(row):
+                    pdf.cell(col_widths[i], 10, str(cell_text), 1)
                 pdf.ln()
 
             desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
