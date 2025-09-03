@@ -1,0 +1,7 @@
+__pycache__/
+*.pkl
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.DS_Store
