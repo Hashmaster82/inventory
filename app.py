@@ -7,7 +7,6 @@ import pandas as pd
 from fpdf import FPDF
 import webbrowser
 
-
 # Создаем класс FPDF с поддержкой кириллицы и шрифтом ChakraPetch
 class PDFWithCyrillic(FPDF):
     def __init__(self, *args, **kwargs):
