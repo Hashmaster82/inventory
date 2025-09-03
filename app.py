@@ -5,6 +5,7 @@ from tkinter import ttk, messagebox, scrolledtext
 from datetime import datetime
 import webbrowser
 from fpdf import FPDF  # Импорт FPDF для PDF создания
+import tkinter.font as tkFont
 
 
 class PDFWithCyrillic(FPDF):
@@ -17,7 +18,11 @@ class InventoryApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Система инвентаризации оборудования")
-        self.root.geometry("900x700")
+        self.root.state('zoomed')
+
+        # Создаем глобальный шрифт для всего приложения
+        self.default_font = tkFont.Font(family='Arial', size=14)
+        self.root.option_add("*Font", self.default_font)
 
         self.inventory_file = r"\\fs\SHARE_BH\it\inventory\inventory.json"
         self.inventory_data = self.load_data()
@@ -57,6 +62,12 @@ class InventoryApp:
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill='both', expand=True)
 
+        # Настройка стиля вкладок и текста
+        style = ttk.Style()
+        style.configure('Big.TButton', font=('Arial', 18, 'bold'))
+
+        style.configure('TNotebook.Tab', font=('Arial', 16, 'bold'), padding=[20, 10])
+
         self.add_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.add_frame, text="Добавить оборудование")
 
@@ -78,9 +89,6 @@ class InventoryApp:
         self.create_show_all_tab()
         self.create_about_tab()
 
-        style = ttk.Style()
-        style.configure('Big.TButton', font=('Arial', 12, 'bold'))
-
     def create_add_tab(self):
         fields = [
             ("Тип оборудования", "equipment_type"),
@@ -98,31 +106,31 @@ class InventoryApp:
             label.grid(row=i, column=0, sticky='w', padx=10, pady=5)
 
             if field_name == "comments":
-                entry = scrolledtext.ScrolledText(self.add_frame, width=40, height=4)
+                entry = scrolledtext.ScrolledText(self.add_frame, width=40, height=4, font=self.default_font)
                 entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
             elif field_name == "date":
-                entry = ttk.Entry(self.add_frame, width=40)
+                entry = ttk.Entry(self.add_frame, width=40, font=self.default_font)
                 entry.insert(0, datetime.now().strftime("%d.%m.%Y"))
                 entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
             else:
-                entry = ttk.Entry(self.add_frame, width=40)
+                entry = ttk.Entry(self.add_frame, width=40, font=self.default_font)
                 entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
 
             self.entries[field_name] = entry
 
         add_button = ttk.Button(self.add_frame, text="Добавить оборудование",
-                                command=self.add_equipment)
+                                command=self.add_equipment, style='Big.TButton')
         add_button.grid(row=len(fields), column=0, columnspan=2, pady=20)
         self.add_frame.columnconfigure(1, weight=1)
         self.add_frame.rowconfigure(len(fields), weight=1)
 
     def create_search_tab(self):
-        ttk.Label(self.search_frame, text="Поиск:").grid(row=0, column=0, sticky='w', padx=10, pady=5)
-        self.search_entry = ttk.Entry(self.search_frame, width=40)
+        ttk.Label(self.search_frame, text="Поиск:", font=self.default_font).grid(row=0, column=0, sticky='w', padx=10, pady=5)
+        self.search_entry = ttk.Entry(self.search_frame, width=40, font=self.default_font)
         self.search_entry.grid(row=0, column=1, padx=10, pady=5, sticky='we')
         self.search_entry.bind('<KeyRelease>', self.perform_search)
 
-        clear_button = ttk.Button(self.search_frame, text="Очистить", command=self.clear_search)
+        clear_button = ttk.Button(self.search_frame, text="Очистить", command=self.clear_search, style='Big.TButton')
         clear_button.grid(row=0, column=2, padx=10, pady=5)
 
         columns = ("Тип", "Модель", "Серийный номер", "Закрепление", "Дата", "Комментарии")
@@ -130,7 +138,7 @@ class InventoryApp:
 
         for col in columns:
             self.search_tree.heading(col, text=col)
-            self.search_tree.column(col, width=100)
+            self.search_tree.column(col, width=150, anchor='center')
 
         self.search_tree.bind('<Double-1>', self.on_tree_double_click)
         self.search_tree.bind('<Button-3>', self.show_context_menu)
@@ -141,9 +149,8 @@ class InventoryApp:
         self.search_tree.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky='nsew')
         scrollbar.grid(row=1, column=3, sticky='ns', pady=5)
 
-        # Кнопка экспорта результатов поиска в PDF
         export_pdf_btn = ttk.Button(self.search_frame, text="📄 Экспорт результатов поиска в PDF",
-                                    command=self.export_search_results_to_pdf)
+                                    command=self.export_search_results_to_pdf, style='Big.TButton')
         export_pdf_btn.grid(row=2, column=0, columnspan=3, pady=10, sticky='we')
 
         self.search_context_menu = tk.Menu(self.search_tree, tearoff=0)
@@ -153,16 +160,16 @@ class InventoryApp:
         self.search_frame.rowconfigure(1, weight=1)
 
     def create_employee_tab(self):
-        ttk.Label(self.employee_frame, text="Сотрудник:").grid(row=0, column=0, sticky='w', padx=10, pady=5)
+        ttk.Label(self.employee_frame, text="Сотрудник:", font=self.default_font).grid(row=0, column=0, sticky='w', padx=10, pady=5)
         employees = sorted(set(item.get('assignment', '') for item in self.inventory_data if item.get('assignment')))
         self.employee_var = tk.StringVar()
         self.employee_combo = ttk.Combobox(self.employee_frame, textvariable=self.employee_var,
-                                           values=employees, width=30)
+                                           values=employees, width=30, font=self.default_font)
         self.employee_combo.grid(row=0, column=1, padx=10, pady=5, sticky='we')
         self.employee_combo.bind('<<ComboboxSelected>>', self.show_employee_equipment)
 
         refresh_button = ttk.Button(self.employee_frame, text="Обновить",
-                                    command=self.refresh_employee_list)
+                                    command=self.refresh_employee_list, style='Big.TButton')
         refresh_button.grid(row=0, column=2, padx=10, pady=5)
 
         columns = ("Тип", "Модель", "Серийный номер", "Дата", "Комментарии")
@@ -170,7 +177,7 @@ class InventoryApp:
 
         for col in columns:
             self.employee_tree.heading(col, text=col)
-            self.employee_tree.column(col, width=120)
+            self.employee_tree.column(col, width=150, anchor='center')
 
         self.employee_tree.bind('<Double-1>', self.on_tree_double_click)
         self.employee_tree.bind('<Button-3>', self.show_context_menu)
@@ -189,7 +196,7 @@ class InventoryApp:
 
     def create_show_all_tab(self):
         refresh_button = ttk.Button(self.show_all_frame, text="Обновить данные",
-                                    command=self.show_all_data)
+                                    command=self.show_all_data, style='Big.TButton')
         refresh_button.pack(pady=10)
 
         table_frame = ttk.Frame(self.show_all_frame)
@@ -200,7 +207,7 @@ class InventoryApp:
 
         for col in columns:
             self.all_tree.heading(col, text=col)
-            self.all_tree.column(col, width=100)
+            self.all_tree.column(col, width=150, anchor='center')
 
         self.all_tree.bind('<Double-1>', self.on_tree_double_click)
         self.all_tree.bind('<Button-3>', self.show_context_menu)
@@ -209,7 +216,7 @@ class InventoryApp:
         self.all_tree.configure(yscrollcommand=scrollbar.set)
 
         delete_button = ttk.Button(self.show_all_frame, text="Удалить выбранную запись",
-                                   command=self.delete_selected_item)
+                                   command=self.delete_selected_item, style='Big.TButton')
         delete_button.pack(pady=5)
 
         self.all_tree.pack(side='left', fill='both', expand=True)
@@ -227,11 +234,11 @@ class InventoryApp:
         info_text = """
         Система инвентаризации оборудования
 
-        Версия: 0.1
+        Версия: 0.2
         Разработано: Разин Григорий
 
         Контактная информация:
-        Email: lantester35@gmail.com
+        Email: [lantester35@gmail.com](mailto:lantester35@gmail.com)
 
         Функционал:
         - Ведение учета оборудования
@@ -242,13 +249,15 @@ class InventoryApp:
         """
 
         about_text = scrolledtext.ScrolledText(center_frame, width=60, height=15,
-                                               font=('Arial', 11), wrap=tk.WORD)
+                                               font=self.default_font, wrap=tk.WORD)
         about_text.insert('1.0', info_text)
         about_text.config(state='disabled')
         about_text.pack(pady=20, padx=20, expand=True)
 
-        close_button = ttk.Button(center_frame, text="Закрыть", command=self.root.quit)
+        close_button = ttk.Button(center_frame, text="Закрыть", command=self.root.quit, style='Big.TButton')
         close_button.pack(pady=10)
+
+    # остальные методы без изменений (оставлены как были)...
 
     def show_context_menu(self, event):
         tree = event.widget
@@ -421,7 +430,7 @@ class InventoryApp:
 
     def edit_cell(self, tree, item, col_index, field_name, current_value):
         bbox = tree.bbox(item, column=f'#{col_index + 1}')
-        entry_edit = ttk.Entry(tree, width=bbox[2])
+        entry_edit = ttk.Entry(tree, width=bbox[2], font=self.default_font)
         entry_edit.insert(0, current_value)
         entry_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
         entry_edit.focus()
@@ -462,23 +471,23 @@ class InventoryApp:
             pdf.set_auto_page_break(auto=True, margin=15)
             pdf.add_page()
 
-            pdf.set_font("ChakraPetch", '', 16)
+            pdf.set_font("ChakraPetch", '', 18)
             pdf.cell(0, 10, "Полный отчет по инвентаризации оборудования", 0, 1, 'C')
             pdf.ln(10)
 
-            pdf.set_font("ChakraPetch", '', 10)
+            pdf.set_font("ChakraPetch", '', 12)
             pdf.cell(0, 10, f"Отчет сгенерирован: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}", 0, 1, 'R')
             pdf.ln(5)
 
             total_equipment = len(self.inventory_data)
             unique_employees = len(set(item.get('assignment', '') for item in self.inventory_data if item.get('assignment')))
-            pdf.set_font("ChakraPetch", '', 12)
+            pdf.set_font("ChakraPetch", '', 14)
             pdf.cell(0, 10, "Общая статистика:", 0, 1)
             pdf.cell(0, 10, f"Всего единиц оборудования: {total_equipment}", 0, 1)
             pdf.cell(0, 10, f"Количество сотрудников с оборудованием: {unique_employees}", 0, 1)
             pdf.ln(10)
 
-            pdf.set_font("ChakraPetch", '', 10)
+            pdf.set_font("ChakraPetch", '', 12)
             columns = ["Тип", "Модель", "Серийный номер", "Закрепление", "Дата", "Комментарии"]
             col_widths = [30, 35, 40, 35, 25, 45]
 
@@ -486,7 +495,7 @@ class InventoryApp:
                 pdf.cell(col_widths[i], 10, col, 1, 0, 'C')
             pdf.ln()
 
-            pdf.set_font("ChakraPetch", '', 8)
+            pdf.set_font("ChakraPetch", '', 10)
             for item in self.inventory_data:
                 pdf.cell(col_widths[0], 10, item.get('equipment_type', '')[:20] or '-', 1)
                 pdf.cell(col_widths[1], 10, item.get('model', '')[:20] or '-', 1)
@@ -506,7 +515,6 @@ class InventoryApp:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось создать PDF отчет: {e}")
 
-    # Новый метод для экспорта PDF из результатов поиска
     def export_search_results_to_pdf(self):
         items = self.search_tree.get_children()
         if not items:
