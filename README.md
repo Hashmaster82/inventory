@@ -20,6 +20,7 @@
 1. Клонировать репозиторий:
 
 git clone https://github.com/Hashmaster82/inventory.git
+
 cd inventoryapp
 
 text
