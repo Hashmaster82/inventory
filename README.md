@@ -23,13 +23,10 @@ git clone https://github.com/Hashmaster82/inventory.git
 
 cd inventoryapp
 
-text
 
 2. Установить зависимости (рекомендуется использовать виртуальное окружение):
 
 pip install -r requirements.txt
-
-text
 
 3. Поставить файл шрифта ChakraPetch-Regular.ttf в корень проекта.
 
@@ -38,8 +35,6 @@ text
 ## Запуск
 
 python app.py
-
-text
 
 ---
 
