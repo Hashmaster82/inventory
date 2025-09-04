@@ -78,7 +78,7 @@ class InventoryApp:
         self.notebook.add(self.show_all_frame, text="Показать всё")
 
         self.about_frame = ttk.Frame(self.notebook)
-        self.notebook.add(self.about_frame, text="About")
+        self.notebook.add(self.about_frame, text="Инфо")
 
         self.create_add_tab()
         self.create_search_tab()
