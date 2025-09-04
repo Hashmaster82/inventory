@@ -50,23 +50,6 @@ class InventoryApp:
             messagebox.showerror("Ошибка", f"Не удалось сохранить данные: {e}")
             return False
 
-    def bind_clipboard_events(self, widget):
-        def do_copy(event):
-            widget.event_generate("<<Copy>>")
-            return "break"
-
-        def do_cut(event):
-            widget.event_generate("<<Cut>>")
-            return "break"
-
-        def do_paste(event):
-            widget.event_generate("<<Paste>>")
-            return "break"
-
-        widget.bind("<Control-c>", do_copy)
-        widget.bind("<Control-x>", do_cut)
-        widget.bind("<Control-v>", do_paste)
-
     def create_widgets(self):
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill='both', expand=True, padx=10, pady=10)
@@ -119,16 +102,13 @@ class InventoryApp:
             if field_name == "comments":
                 entry = scrolledtext.ScrolledText(self.add_frame, width=40, height=4, font=self.default_font)
                 entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
-                self.bind_clipboard_events(entry)
             elif field_name == "date":
                 entry = ttk.Entry(self.add_frame, width=40, font=self.default_font)
                 entry.insert(0, datetime.now().strftime("%d.%m.%Y"))
                 entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
-                self.bind_clipboard_events(entry)
             else:
                 entry = ttk.Entry(self.add_frame, width=40, font=self.default_font)
                 entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
-                self.bind_clipboard_events(entry)
             self.entries[field_name] = entry
 
         add_button = ttk.Button(self.add_frame, text="Добавить оборудование",
@@ -141,7 +121,6 @@ class InventoryApp:
         ttk.Label(self.search_frame, text="Поиск:", font=self.default_font).grid(row=0, column=0, sticky='w', padx=10, pady=5)
         self.search_entry = ttk.Entry(self.search_frame, width=40, font=self.default_font)
         self.search_entry.grid(row=0, column=1, padx=10, pady=5, sticky='we')
-        self.bind_clipboard_events(self.search_entry)
         self.search_entry.bind('<KeyRelease>', self.perform_search)
 
         clear_button = ttk.Button(self.search_frame, text="Очистить", command=self.clear_search, style='Big.TButton')
@@ -180,7 +159,6 @@ class InventoryApp:
         self.employee_combo = ttk.Combobox(self.employee_frame, textvariable=self.employee_var,
                                            values=employees, width=30, font=self.default_font)
         self.employee_combo.grid(row=0, column=1, padx=10, pady=5, sticky='we')
-        self.bind_clipboard_events(self.employee_combo)
         self.employee_combo.bind('<<ComboboxSelected>>', self.show_employee_equipment)
 
         refresh_button = ttk.Button(self.employee_frame, text="Обновить",
@@ -485,7 +463,6 @@ class InventoryApp:
         entry_edit.insert(0, current_value)
         entry_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
         entry_edit.focus()
-        self.bind_clipboard_events(entry_edit)
 
         def save_edit(event=None):
             new_value = entry_edit.get().strip()
@@ -541,6 +518,7 @@ class InventoryApp:
 
             columns = ["Тип", "Модель", "Серийный номер", "Закрепление", "Дата", "Комментарии"]
 
+            # Подготавливаем данные для вычисления ширины колонок
             data_rows = []
             for item in self.inventory_data:
                 row = [
@@ -555,19 +533,22 @@ class InventoryApp:
 
             pdf.set_font("ChakraPetch", '', 12)
             col_widths = []
+            # Вычисляем максимальную ширину для каждой колонки
             for col_index in range(len(columns)):
-                max_width = pdf.get_string_width(columns[col_index]) + 6
+                max_width = pdf.get_string_width(columns[col_index]) + 6  # padding
                 for row in data_rows:
-                    w = pdf.get_string_width(str(row[col_index])) + 6
+                    w = pdf.get_string_width(str(row[col_index])) + 6  # padding
                     if w > max_width:
                         max_width = w
                 col_widths.append(max_width)
 
+            # Выводим заголовки
             pdf.set_font("ChakraPetch", '', 14)
             for i, col in enumerate(columns):
                 pdf.cell(col_widths[i], 10, col, 1, 0, 'C')
             pdf.ln()
 
+            # Выводим данные
             pdf.set_font("ChakraPetch", '', 12)
             for row in data_rows:
                 for i, cell_text in enumerate(row):
@@ -605,6 +586,7 @@ class InventoryApp:
 
             columns = ["Тип", "Модель", "Серийный номер", "Закрепление", "Дата", "Комментарии"]
 
+            # Собираем данные из дерева поиска
             data_rows = [self.search_tree.item(item, 'values') for item in items]
 
             pdf.set_font("ChakraPetch", '', 12)
