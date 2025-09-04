@@ -6,6 +6,7 @@ from datetime import datetime
 import webbrowser
 from fpdf import FPDF
 import tkinter.font as tkFont
+import shutil
 
 
 class PDFWithCyrillic(FPDF):
@@ -50,6 +51,30 @@ class InventoryApp:
             messagebox.showerror("Ошибка", f"Не удалось сохранить данные: {e}")
             return False
 
+    def create_backup(self):
+        """Создание резервной копии JSON файла"""
+        try:
+            if not os.path.exists(self.inventory_file):
+                messagebox.showwarning("Предупреждение", "Файл инвентаризации не существует")
+                return
+
+            # Создаем папку для бэкапов, если её нет
+            backup_dir = os.path.join(os.path.dirname(self.inventory_file), "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+
+            # Формируем имя файла бэкапа с датой и временем
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_filename = f"inventory_backup_{timestamp}.json"
+            backup_path = os.path.join(backup_dir, backup_filename)
+
+            # Копируем файл
+            shutil.copy2(self.inventory_file, backup_path)
+
+            messagebox.showinfo("Успех", f"Резервная копия создана:\n{backup_path}")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось создать резервную копию: {e}")
+
     def bind_clipboard_events(self, widget):
         def do_copy(event):
             widget.event_generate("<<Copy>>")
@@ -71,9 +96,19 @@ class InventoryApp:
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill='both', expand=True, padx=10, pady=10)
 
-        pdf_button = ttk.Button(main_frame, text="📄 Выгрузить полный отчет в PDF",
+        # Кнопки в верхнем меню
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=10, fill='x')
+
+        # Кнопка для создания бэкапа
+        backup_button = ttk.Button(button_frame, text="📂 Создать резервную копию",
+                                   command=self.create_backup, style='Big.TButton')
+        backup_button.pack(side='left', padx=5, fill='x', expand=True)
+
+        # Кнопка для экспорта в PDF
+        pdf_button = ttk.Button(button_frame, text="📄 Выгрузить полный отчет в PDF",
                                 command=self.export_to_pdf, style='Big.TButton')
-        pdf_button.pack(pady=10, fill='x')
+        pdf_button.pack(side='left', padx=5, fill='x', expand=True)
 
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill='both', expand=True)
@@ -138,7 +173,8 @@ class InventoryApp:
         self.add_frame.rowconfigure(len(fields), weight=1)
 
     def create_search_tab(self):
-        ttk.Label(self.search_frame, text="Поиск:", font=self.default_font).grid(row=0, column=0, sticky='w', padx=10, pady=5)
+        ttk.Label(self.search_frame, text="Поиск:", font=self.default_font).grid(row=0, column=0, sticky='w', padx=10,
+                                                                                 pady=5)
         self.search_entry = ttk.Entry(self.search_frame, width=40, font=self.default_font)
         self.search_entry.grid(row=0, column=1, padx=10, pady=5, sticky='we')
         self.bind_clipboard_events(self.search_entry)
@@ -151,7 +187,8 @@ class InventoryApp:
         self.search_tree = ttk.Treeview(self.search_frame, columns=columns, show='headings', height=15)
 
         for col in columns:
-            self.search_tree.heading(col, text=col, command=lambda _col=col: self.treeview_sort_column(self.search_tree, _col, False))
+            self.search_tree.heading(col, text=col,
+                                     command=lambda _col=col: self.treeview_sort_column(self.search_tree, _col, False))
             self.search_tree.column(col, width=150, anchor='center')
 
         self.search_tree.bind('<Double-1>', self.on_tree_double_click)
@@ -174,7 +211,8 @@ class InventoryApp:
         self.search_frame.rowconfigure(1, weight=1)
 
     def create_employee_tab(self):
-        ttk.Label(self.employee_frame, text="Сотрудник:", font=self.default_font).grid(row=0, column=0, sticky='w', padx=10, pady=5)
+        ttk.Label(self.employee_frame, text="Сотрудник:", font=self.default_font).grid(row=0, column=0, sticky='w',
+                                                                                       padx=10, pady=5)
         employees = sorted(set(item.get('assignment', '') for item in self.inventory_data if item.get('assignment')))
         self.employee_var = tk.StringVar()
         self.employee_combo = ttk.Combobox(self.employee_frame, textvariable=self.employee_var,
@@ -191,7 +229,9 @@ class InventoryApp:
         self.employee_tree = ttk.Treeview(self.employee_frame, columns=columns, show='headings', height=15)
 
         for col in columns:
-            self.employee_tree.heading(col, text=col, command=lambda _col=col: self.treeview_sort_column(self.employee_tree, _col, False))
+            self.employee_tree.heading(col, text=col,
+                                       command=lambda _col=col: self.treeview_sort_column(self.employee_tree, _col,
+                                                                                          False))
             self.employee_tree.column(col, width=150, anchor='center')
 
         self.employee_tree.bind('<Double-1>', self.on_tree_double_click)
@@ -221,7 +261,8 @@ class InventoryApp:
         self.all_tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=20)
 
         for col in columns:
-            self.all_tree.heading(col, text=col, command=lambda _col=col: self.treeview_sort_column(self.all_tree, _col, False))
+            self.all_tree.heading(col, text=col,
+                                  command=lambda _col=col: self.treeview_sort_column(self.all_tree, _col, False))
             self.all_tree.column(col, width=150, anchor='center')
 
         self.all_tree.bind('<Double-1>', self.on_tree_double_click)
@@ -249,7 +290,7 @@ class InventoryApp:
         info_text = """
         Система инвентаризации оборудования
 
-        Версия: 0.2
+        Версия: 0.4
         Разработано: Разин Григорий
 
         Контактная информация:
@@ -407,7 +448,8 @@ class InventoryApp:
                     item.get('serial_number', ''),
                     item.get('assignment', ''),
                     item.get('date', ''),
-                    (item.get('comments', '')[:50] + '...') if item.get('comments') and len(item.get('comments')) > 50 else item.get('comments', '')
+                    (item.get('comments', '')[:50] + '...') if item.get('comments') and len(
+                        item.get('comments')) > 50 else item.get('comments', '')
                 ))
 
     def clear_search(self):
@@ -435,7 +477,8 @@ class InventoryApp:
                     item.get('model', ''),
                     item.get('serial_number', ''),
                     item.get('date', ''),
-                    (item.get('comments', '')[:50] + '...') if item.get('comments') and len(item.get('comments')) > 50 else item.get('comments', '')
+                    (item.get('comments', '')[:50] + '...') if item.get('comments') and len(
+                        item.get('comments')) > 50 else item.get('comments', '')
                 ))
 
     def show_all_data(self):
@@ -449,7 +492,8 @@ class InventoryApp:
                 item.get('serial_number', ''),
                 item.get('assignment', ''),
                 item.get('date', ''),
-                (item.get('comments', '')[:50] + '...') if item.get('comments') and len(item.get('comments')) > 50 else item.get('comments', '')
+                (item.get('comments', '')[:50] + '...') if item.get('comments') and len(
+                    item.get('comments')) > 50 else item.get('comments', '')
             ))
 
     def on_tree_double_click(self, event):
@@ -481,35 +525,58 @@ class InventoryApp:
 
     def edit_cell(self, tree, item, col_index, field_name, current_value):
         bbox = tree.bbox(item, column=f'#{col_index + 1}')
-        entry_edit = ttk.Entry(tree, width=bbox[2], font=self.default_font)
-        entry_edit.insert(0, current_value)
-        entry_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
-        entry_edit.focus()
-        self.bind_clipboard_events(entry_edit)
+        if field_name == 'comments':
+            text_edit = scrolledtext.ScrolledText(tree, width=40, height=4, font=self.default_font)
+            text_edit.insert('1.0', current_value)
+            text_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3] * 3)
+            text_edit.focus()
+            self.bind_clipboard_events(text_edit)
 
-        def save_edit(event=None):
-            new_value = entry_edit.get().strip()
-            entry_edit.destroy()
+            def save_edit(event=None):
+                new_value = text_edit.get('1.0', tk.END).strip()
+                text_edit.destroy()
+                current_values = list(tree.item(item, 'values'))
+                current_values[col_index] = new_value
+                tree.item(item, values=current_values)
+                serial_number = current_values[2]
+                for inventory_item in self.inventory_data:
+                    if inventory_item.get('serial_number') == serial_number:
+                        inventory_item[field_name] = new_value
+                        break
+                self.save_data()
 
-            current_values = list(tree.item(item, 'values'))
-            current_values[col_index] = new_value
-            tree.item(item, values=current_values)
+            def cancel_edit(event=None):
+                text_edit.destroy()
 
-            serial_number = current_values[2]
+            text_edit.bind('<Return>', save_edit)
+            text_edit.bind('<Escape>', cancel_edit)
+            text_edit.bind('<FocusOut>', lambda e: save_edit())
+        else:
+            entry_edit = ttk.Entry(tree, width=bbox[2], font=self.default_font)
+            entry_edit.insert(0, current_value)
+            entry_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
+            entry_edit.focus()
+            self.bind_clipboard_events(entry_edit)
 
-            for inventory_item in self.inventory_data:
-                if inventory_item.get('serial_number') == serial_number:
-                    inventory_item[field_name] = new_value
-                    break
+            def save_edit(event=None):
+                new_value = entry_edit.get().strip()
+                entry_edit.destroy()
+                current_values = list(tree.item(item, 'values'))
+                current_values[col_index] = new_value
+                tree.item(item, values=current_values)
+                serial_number = current_values[2]
+                for inventory_item in self.inventory_data:
+                    if inventory_item.get('serial_number') == serial_number:
+                        inventory_item[field_name] = new_value
+                        break
+                self.save_data()
 
-            self.save_data()
+            def cancel_edit(event=None):
+                entry_edit.destroy()
 
-        def cancel_edit(event=None):
-            entry_edit.destroy()
-
-        entry_edit.bind('<Return>', save_edit)
-        entry_edit.bind('<Escape>', cancel_edit)
-        entry_edit.bind('<FocusOut>', lambda e: save_edit())
+            entry_edit.bind('<Return>', save_edit)
+            entry_edit.bind('<Escape>', cancel_edit)
+            entry_edit.bind('<FocusOut>', lambda e: save_edit())
 
     def export_to_pdf(self):
         if not self.inventory_data:
@@ -532,7 +599,8 @@ class InventoryApp:
             pdf.ln(5)
 
             total_equipment = len(self.inventory_data)
-            unique_employees = len(set(item.get('assignment', '') for item in self.inventory_data if item.get('assignment')))
+            unique_employees = len(
+                set(item.get('assignment', '') for item in self.inventory_data if item.get('assignment')))
             pdf.set_font("ChakraPetch", '', 14)
             pdf.cell(0, 10, "Общая статистика:", 0, 1)
             pdf.cell(0, 10, f"Всего единиц оборудования: {total_equipment}", 0, 1)
@@ -549,7 +617,8 @@ class InventoryApp:
                     item.get('serial_number', '') or '-',
                     item.get('assignment', '') or '-',
                     item.get('date', '') or '-',
-                    (item.get('comments', '')[:50] + '...') if item.get('comments') and len(item.get('comments')) > 50 else (item.get('comments', '') or '-')
+                    (item.get('comments', '')[:50] + '...') if item.get('comments') and len(
+                        item.get('comments')) > 50 else (item.get('comments', '') or '-')
                 ]
                 data_rows.append(row)
 
