@@ -124,7 +124,7 @@ class InventoryApp:
         self.notebook.add(self.search_frame, text="Поиск оборудования")
 
         self.employee_frame = ttk.Frame(self.notebook)
-        self.notebook.add(self.employee_frame, text="Оборудование по сотрудникам")
+        self.notebook.add(self.employee_frame, text="Сотрудники")
 
         self.show_all_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.show_all_frame, text="Показать всё")
@@ -243,6 +243,11 @@ class InventoryApp:
         self.employee_tree.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky='nsew')
         scrollbar.grid(row=1, column=3, sticky='ns', pady=5)
 
+        # Кнопка экспорта в PDF для раздела сотрудников
+        export_pdf_btn = ttk.Button(self.employee_frame, text="📄 Экспорт в PDF",
+                                    command=self.export_employee_results_to_pdf, style='Big.TButton')
+        export_pdf_btn.grid(row=2, column=0, columnspan=3, pady=10, sticky='we')
+
         self.employee_context_menu = tk.Menu(self.employee_tree, tearoff=0)
         self.employee_context_menu.add_command(label="Удалить запись", command=self.delete_selected_item)
 
@@ -271,10 +276,7 @@ class InventoryApp:
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.all_tree.yview)
         self.all_tree.configure(yscrollcommand=scrollbar.set)
 
-        delete_button = ttk.Button(self.show_all_frame, text="Удалить выбранную запись",
-                                   command=self.delete_selected_item, style='Big.TButton')
-        delete_button.pack(pady=5)
-
+        # Убрана кнопка удаления записи
         self.all_tree.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
 
@@ -287,15 +289,11 @@ class InventoryApp:
         center_frame = ttk.Frame(self.about_frame)
         center_frame.pack(expand=True, fill='both')
 
-        info_text = """
-        Система инвентаризации оборудования
-
-        Версия: 0.4
+        info_text = """Система инвентаризации оборудования
+        Версия: 0.5
         Разработано: Разин Григорий
-
         Контактная информация:
         Email: lantester35@gmail.com
-
         Функционал:
         - Ведение учета оборудования
         - Поиск и фильтрация данных
@@ -700,6 +698,62 @@ class InventoryApp:
             desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
             pdf_filename = os.path.join(desktop_path,
                                         f"search_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+            pdf.output(pdf_filename)
+
+            webbrowser.open(pdf_filename)
+            messagebox.showinfo("Успех", f"Отчет сохранен на рабочем столе:\n{pdf_filename}")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось создать PDF отчет: {e}")
+
+    def export_employee_results_to_pdf(self):
+        items = self.employee_tree.get_children()
+        if not items:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+
+        try:
+            if not os.path.exists('ChakraPetch-Regular.ttf'):
+                messagebox.showerror("Ошибка", "Отсутствует файл шрифта: ChakraPetch-Regular.ttf")
+                return
+
+            pdf = PDFWithCyrillic(orientation='L')
+            pdf.set_auto_page_break(auto=True, margin=15)
+            pdf.add_page()
+
+            employee_name = self.employee_var.get()
+            pdf.set_font("ChakraPetch", '', 14)
+            pdf.cell(0, 10, f"Отчет по оборудованию сотрудника: {employee_name}", 0, 1, 'C')
+            pdf.ln(10)
+
+            columns = ["Тип", "Модель", "Серийный номер", "Дата", "Комментарии"]
+
+            data_rows = [self.employee_tree.item(item, 'values') for item in items]
+
+            pdf.set_font("ChakraPetch", '', 12)
+            col_widths = []
+            for col_index in range(len(columns)):
+                max_width = pdf.get_string_width(columns[col_index]) + 6
+                for row in data_rows:
+                    w = pdf.get_string_width(str(row[col_index])) + 6
+                    if w > max_width:
+                        max_width = w
+                col_widths.append(max_width)
+
+            pdf.set_font("ChakraPetch", '', 14)
+            for i, col in enumerate(columns):
+                pdf.cell(col_widths[i], 10, col, 1, 0, 'C')
+            pdf.ln()
+
+            pdf.set_font("ChakraPetch", '', 12)
+            for row in data_rows:
+                for i, cell_text in enumerate(row):
+                    pdf.cell(col_widths[i], 10, str(cell_text), 1)
+                pdf.ln()
+
+            desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+            pdf_filename = os.path.join(desktop_path,
+                                        f"employee_equipment_{employee_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
             pdf.output(pdf_filename)
 
             webbrowser.open(pdf_filename)

@@ -1,7 +1,7 @@
 import json
 import os
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, filedialog
 from datetime import datetime
 import webbrowser
 from fpdf import FPDF
@@ -24,10 +24,41 @@ class InventoryApp:
         self.default_font = tkFont.Font(family='Arial', size=14)
         self.root.option_add("*Font", self.default_font)
 
+        # Основной файл инвентаря
         self.inventory_file = r"\\fs\SHARE_BH\it\inventory\inventory.json"
         self.inventory_data = self.load_data()
+
+        # Файл типов оборудования
+        self.equipment_types_file = "equipment_types.json"
+        self.equipment_types = self.load_equipment_types()
+
         self.create_widgets()
 
+    # =============== РАБОТА С ТИПАМИ ОБОРУДОВАНИЯ ===============
+    def load_equipment_types(self):
+        try:
+            if os.path.exists(self.equipment_types_file):
+                with open(self.equipment_types_file, 'r', encoding='utf-8') as file:
+                    data = json.load(file)
+                    return data if isinstance(data, list) else []
+            else:
+                default_types = ["Монитор", "Сисблок", "МФУ", "Клавиатура", "Мышь", "Наушники"]
+                self.save_equipment_types(default_types)
+                return default_types
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось загрузить типы оборудования: {e}")
+            return []
+
+    def save_equipment_types(self, types_list):
+        try:
+            with open(self.equipment_types_file, 'w', encoding='utf-8') as file:
+                json.dump(types_list, file, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить типы оборудования: {e}")
+            return False
+
+    # =============== ОСНОВНАЯ ЛОГИКА ===============
     def load_data(self):
         try:
             if os.path.exists(self.inventory_file):
@@ -58,18 +89,14 @@ class InventoryApp:
                 messagebox.showwarning("Предупреждение", "Файл инвентаризации не существует")
                 return
 
-            # Создаем папку для бэкапов, если её нет
             backup_dir = os.path.join(os.path.dirname(self.inventory_file), "backups")
             os.makedirs(backup_dir, exist_ok=True)
 
-            # Формируем имя файла бэкапа с датой и временем
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_filename = f"inventory_backup_{timestamp}.json"
             backup_path = os.path.join(backup_dir, backup_filename)
 
-            # Копируем файл
             shutil.copy2(self.inventory_file, backup_path)
-
             messagebox.showinfo("Успех", f"Резервная копия создана:\n{backup_path}")
 
         except Exception as e:
@@ -96,16 +123,13 @@ class InventoryApp:
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill='both', expand=True, padx=10, pady=10)
 
-        # Кнопки в верхнем меню
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=10, fill='x')
 
-        # Кнопка для создания бэкапа
         backup_button = ttk.Button(button_frame, text="📂 Создать резервную копию",
                                    command=self.create_backup, style='Big.TButton')
         backup_button.pack(side='left', padx=5, fill='x', expand=True)
 
-        # Кнопка для экспорта в PDF
         pdf_button = ttk.Button(button_frame, text="📄 Выгрузить полный отчет в PDF",
                                 command=self.export_to_pdf, style='Big.TButton')
         pdf_button.pack(side='left', padx=5, fill='x', expand=True)
@@ -129,6 +153,14 @@ class InventoryApp:
         self.show_all_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.show_all_frame, text="Показать всё")
 
+        # НОВАЯ ВКЛАДКА: Оборудование
+        self.equipment_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.equipment_frame, text="Оборудование")
+
+        # НОВАЯ ВКЛАДКА: Настройки
+        self.settings_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.settings_frame, text="Настройки")
+
         self.about_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.about_frame, text="Инфо")
 
@@ -136,11 +168,141 @@ class InventoryApp:
         self.create_search_tab()
         self.create_employee_tab()
         self.create_show_all_tab()
+        self.create_equipment_tab()      # <-- НОВЫЙ МЕТОД
+        self.create_settings_tab()       # <-- НОВЫЙ МЕТОД
         self.create_about_tab()
 
+    # =============== ВКЛАДКА: ОБОРУДОВАНИЕ ===============
+    def create_equipment_tab(self):
+        frame = self.equipment_frame
+
+        ttk.Label(frame, text="Тип оборудования:", font=self.default_font).grid(row=0, column=0, sticky='w', padx=10, pady=5)
+        self.equipment_type_entry = ttk.Entry(frame, width=40, font=self.default_font)
+        self.equipment_type_entry.grid(row=0, column=1, padx=10, pady=5, sticky='we')
+        self.bind_clipboard_events(self.equipment_type_entry)
+
+        add_btn = ttk.Button(frame, text="➕ Добавить тип", command=self.add_equipment_type, style='Big.TButton')
+        add_btn.grid(row=0, column=2, padx=10, pady=5)
+
+        # Список типов
+        columns = ("Тип оборудования",)
+        self.equipment_tree = ttk.Treeview(frame, columns=columns, show='headings', height=15)
+        self.equipment_tree.heading("Тип оборудования", text="Тип оборудования")
+        self.equipment_tree.column("Тип оборудования", width=300, anchor='center')
+
+        self.equipment_tree.bind('<Button-3>', self.show_equipment_context_menu)
+
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.equipment_tree.yview)
+        self.equipment_tree.configure(yscrollcommand=scrollbar.set)
+
+        self.equipment_tree.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky='nsew')
+        scrollbar.grid(row=1, column=3, sticky='ns', pady=5)
+
+        self.equipment_context_menu = tk.Menu(self.equipment_tree, tearoff=0)
+        self.equipment_context_menu.add_command(label="🗑️ Удалить тип", command=self.delete_equipment_type)
+
+        frame.columnconfigure(1, weight=1)
+        frame.rowconfigure(1, weight=1)
+
+        self.refresh_equipment_list()
+
+    def refresh_equipment_list(self):
+        for item in self.equipment_tree.get_children():
+            self.equipment_tree.delete(item)
+        for eq_type in sorted(self.equipment_types):
+            self.equipment_tree.insert("", "end", values=(eq_type,))
+
+    def add_equipment_type(self):
+        new_type = self.equipment_type_entry.get().strip()
+        if not new_type:
+            messagebox.showwarning("Предупреждение", "Введите название типа оборудования")
+            return
+        if new_type in self.equipment_types:
+            messagebox.showwarning("Предупреждение", "Такой тип уже существует")
+            return
+
+        self.equipment_types.append(new_type)
+        if self.save_equipment_types(self.equipment_types):
+            messagebox.showinfo("Успех", "Тип оборудования добавлен")
+            self.equipment_type_entry.delete(0, tk.END)
+            self.refresh_equipment_list()
+            # Обновляем Combobox в add_tab, если он уже создан
+            if hasattr(self, 'equipment_type_combo'):
+                self.equipment_type_combo['values'] = sorted(self.equipment_types)
+
+    def show_equipment_context_menu(self, event):
+        item = self.equipment_tree.identify_row(event.y)
+        if item:
+            self.equipment_tree.selection_set(item)
+            self.equipment_context_menu.post(event.x_root, event.y_root)
+
+    def delete_equipment_type(self):
+        selected_items = self.equipment_tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Предупреждение", "Выберите тип для удаления")
+            return
+
+        selected_type = self.equipment_tree.item(selected_items[0], 'values')[0]
+
+        # Проверка: используется ли тип в инвентаре
+        in_use = any(item.get('equipment_type') == selected_type for item in self.inventory_data)
+        if in_use:
+            if not messagebox.askyesno("Подтверждение",
+                                       f"Тип '{selected_type}' используется в записях. Удалить все связанные записи?"):
+                return
+            # Удаляем все записи с этим типом
+            self.inventory_data = [item for item in self.inventory_data if item.get('equipment_type') != selected_type]
+            self.save_data()
+            self.show_all_data()
+
+        self.equipment_types.remove(selected_type)
+        if self.save_equipment_types(self.equipment_types):
+            messagebox.showinfo("Успех", "Тип оборудования удален")
+            self.refresh_equipment_list()
+            if hasattr(self, 'equipment_type_combo'):
+                self.equipment_type_combo['values'] = sorted(self.equipment_types)
+
+    # =============== ВКЛАДКА: НАСТРОЙКИ ===============
+    def create_settings_tab(self):
+        frame = self.settings_frame
+
+        ttk.Label(frame, text="Текущий файл базы:", font=self.default_font).pack(pady=10)
+        self.current_path_label = ttk.Label(frame, text=self.inventory_file, font=self.default_font, wraplength=800)
+        self.current_path_label.pack(pady=5)
+
+        change_btn = ttk.Button(frame, text="📂 Выбрать другой файл", command=self.change_inventory_file, style='Big.TButton')
+        change_btn.pack(pady=20)
+
+        ttk.Label(frame, text="⚠️ После смены файла данные будут перезагружены", font=self.default_font, foreground="red").pack(pady=10)
+
+    def change_inventory_file(self):
+        new_file = filedialog.askopenfilename(
+            title="Выберите JSON-файл инвентаризации",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if not new_file:
+            return
+
+        # Проверим, можно ли прочитать файл
+        try:
+            with open(new_file, 'r', encoding='utf-8') as f:
+                test_data = json.load(f)
+                if not isinstance(test_data, list):
+                    raise ValueError("Файл должен содержать массив объектов")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Невозможно загрузить файл:\n{e}")
+            return
+
+        self.inventory_file = new_file
+        self.inventory_data = self.load_data()
+        self.current_path_label.config(text=self.inventory_file)
+        self.show_all_data()
+        self.refresh_employee_list()
+        messagebox.showinfo("Успех", "Файл базы успешно изменен!")
+
+    # =============== ВКЛАДКА: ДОБАВИТЬ ОБОРУДОВАНИЕ ===============
     def create_add_tab(self):
         fields = [
-            ("Тип оборудования", "equipment_type"),
             ("Модель", "model"),
             ("Серийный номер", "serial_number"),
             ("Закрепление", "assignment"),
@@ -148,30 +310,42 @@ class InventoryApp:
             ("Комментарии", "comments")
         ]
         self.entries = {}
+
+        # Поле "Тип оборудования" — теперь Combobox
+        ttk.Label(self.add_frame, text="Тип оборудования:").grid(row=0, column=0, sticky='w', padx=10, pady=5)
+        self.equipment_type_var = tk.StringVar()
+        self.equipment_type_combo = ttk.Combobox(self.add_frame, textvariable=self.equipment_type_var,
+                                                 values=sorted(self.equipment_types), width=38, font=self.default_font)
+        self.equipment_type_combo.grid(row=0, column=1, padx=10, pady=5, sticky='we')
+        self.bind_clipboard_events(self.equipment_type_combo)
+        self.entries['equipment_type'] = self.equipment_type_combo  # для совместимости с add_equipment()
+
+        row_offset = 1
         for i, (label_text, field_name) in enumerate(fields):
             label = ttk.Label(self.add_frame, text=label_text + ":")
-            label.grid(row=i, column=0, sticky='w', padx=10, pady=5)
+            label.grid(row=i + row_offset, column=0, sticky='w', padx=10, pady=5)
             if field_name == "comments":
                 entry = scrolledtext.ScrolledText(self.add_frame, width=40, height=4, font=self.default_font)
-                entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
+                entry.grid(row=i + row_offset, column=1, padx=10, pady=5, sticky='we')
                 self.bind_clipboard_events(entry)
             elif field_name == "date":
                 entry = ttk.Entry(self.add_frame, width=40, font=self.default_font)
                 entry.insert(0, datetime.now().strftime("%d.%m.%Y"))
-                entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
+                entry.grid(row=i + row_offset, column=1, padx=10, pady=5, sticky='we')
                 self.bind_clipboard_events(entry)
             else:
                 entry = ttk.Entry(self.add_frame, width=40, font=self.default_font)
-                entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
+                entry.grid(row=i + row_offset, column=1, padx=10, pady=5, sticky='we')
                 self.bind_clipboard_events(entry)
             self.entries[field_name] = entry
 
         add_button = ttk.Button(self.add_frame, text="Добавить оборудование",
                                 command=self.add_equipment, style='Big.TButton')
-        add_button.grid(row=len(fields), column=0, columnspan=2, pady=20)
+        add_button.grid(row=len(fields) + row_offset, column=0, columnspan=2, pady=20)
         self.add_frame.columnconfigure(1, weight=1)
-        self.add_frame.rowconfigure(len(fields), weight=1)
+        self.add_frame.rowconfigure(len(fields) + row_offset, weight=1)
 
+    # =============== ВКЛАДКА: ПОИСК ОБОРУДОВАНИЯ ===============
     def create_search_tab(self):
         ttk.Label(self.search_frame, text="Поиск:", font=self.default_font).grid(row=0, column=0, sticky='w', padx=10,
                                                                                  pady=5)
@@ -210,6 +384,7 @@ class InventoryApp:
         self.search_frame.columnconfigure(1, weight=1)
         self.search_frame.rowconfigure(1, weight=1)
 
+    # =============== ВКЛАДКА: СОТРУДНИКИ ===============
     def create_employee_tab(self):
         ttk.Label(self.employee_frame, text="Сотрудник:", font=self.default_font).grid(row=0, column=0, sticky='w',
                                                                                        padx=10, pady=5)
@@ -254,6 +429,7 @@ class InventoryApp:
         self.employee_frame.columnconfigure(1, weight=1)
         self.employee_frame.rowconfigure(1, weight=1)
 
+    # =============== ВКЛАДКА: ПОКАЗАТЬ ВСЁ ===============
     def create_show_all_tab(self):
         refresh_button = ttk.Button(self.show_all_frame, text="Обновить данные",
                                     command=self.show_all_data, style='Big.TButton')
@@ -276,7 +452,6 @@ class InventoryApp:
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.all_tree.yview)
         self.all_tree.configure(yscrollcommand=scrollbar.set)
 
-        # Убрана кнопка удаления записи
         self.all_tree.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
 
@@ -285,12 +460,14 @@ class InventoryApp:
 
         self.show_all_data()
 
+    # =============== ВКЛАДКА: ИНФО ===============
     def create_about_tab(self):
         center_frame = ttk.Frame(self.about_frame)
         center_frame.pack(expand=True, fill='both')
 
-        info_text = """Система инвентаризации оборудования
-        Версия: 0.5
+        info_text = """
+        Система инвентаризации оборудования
+        Версия: 0.7 (обновлено)
         Разработано: Разин Григорий
         Контактная информация:
         Email: lantester35@gmail.com
@@ -299,6 +476,8 @@ class InventoryApp:
         - Поиск и фильтрация данных
         - Экспорт отчетов в PDF
         - Управление закреплением за сотрудниками
+        - Управление типами оборудования
+        - Настройка пути к файлу базы
         - Удаление записей (правый клик или кнопка удаления)
         """
 
@@ -311,6 +490,7 @@ class InventoryApp:
         close_button = ttk.Button(center_frame, text="Закрыть", command=self.root.quit, style='Big.TButton')
         close_button.pack(pady=10)
 
+    # =============== ОБЩИЕ МЕТОДЫ ===============
     def treeview_sort_column(self, tree, col, reverse):
         date_columns = ['Дата']
         int_columns = []
@@ -428,6 +608,9 @@ class InventoryApp:
                 entry.insert(0, datetime.now().strftime("%d.%m.%Y"))
             else:
                 entry.delete(0, tk.END)
+        # Также очистим Combobox
+        if 'equipment_type' in self.entries:
+            self.entries['equipment_type'].set('')
 
     def perform_search(self, event=None):
         search_text = self.search_entry.get().lower().strip()
@@ -506,14 +689,24 @@ class InventoryApp:
         current_values = tree.item(item, 'values')
         current_value = current_values[col_index]
 
-        field_names = {
-            0: 'equipment_type',
-            1: 'model',
-            2: 'serial_number',
-            3: 'assignment',
-            4: 'date',
-            5: 'comments'
-        }
+        # Маппинг колонок (учитываем, что в employee_tree меньше колонок)
+        if tree == self.employee_tree:
+            field_names = {
+                0: 'equipment_type',
+                1: 'model',
+                2: 'serial_number',
+                3: 'date',
+                4: 'comments'
+            }
+        else:
+            field_names = {
+                0: 'equipment_type',
+                1: 'model',
+                2: 'serial_number',
+                3: 'assignment',
+                4: 'date',
+                5: 'comments'
+            }
 
         field_name = field_names.get(col_index)
         if not field_name:
@@ -523,6 +716,9 @@ class InventoryApp:
 
     def edit_cell(self, tree, item, col_index, field_name, current_value):
         bbox = tree.bbox(item, column=f'#{col_index + 1}')
+        if not bbox:  # иногда bbox возвращает пустой кортеж, если элемент не виден
+            return
+
         if field_name == 'comments':
             text_edit = scrolledtext.ScrolledText(tree, width=40, height=4, font=self.default_font)
             text_edit.insert('1.0', current_value)
@@ -536,12 +732,13 @@ class InventoryApp:
                 current_values = list(tree.item(item, 'values'))
                 current_values[col_index] = new_value
                 tree.item(item, values=current_values)
-                serial_number = current_values[2]
-                for inventory_item in self.inventory_data:
-                    if inventory_item.get('serial_number') == serial_number:
-                        inventory_item[field_name] = new_value
-                        break
-                self.save_data()
+                serial_number = current_values[2] if len(current_values) > 2 else None
+                if serial_number:
+                    for inventory_item in self.inventory_data:
+                        if inventory_item.get('serial_number') == serial_number:
+                            inventory_item[field_name] = new_value
+                            break
+                    self.save_data()
 
             def cancel_edit(event=None):
                 text_edit.destroy()
@@ -550,7 +747,7 @@ class InventoryApp:
             text_edit.bind('<Escape>', cancel_edit)
             text_edit.bind('<FocusOut>', lambda e: save_edit())
         else:
-            entry_edit = ttk.Entry(tree, width=bbox[2], font=self.default_font)
+            entry_edit = ttk.Entry(tree, width=bbox[2] // 8, font=self.default_font)  # ширина в символах
             entry_edit.insert(0, current_value)
             entry_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
             entry_edit.focus()
@@ -562,12 +759,13 @@ class InventoryApp:
                 current_values = list(tree.item(item, 'values'))
                 current_values[col_index] = new_value
                 tree.item(item, values=current_values)
-                serial_number = current_values[2]
-                for inventory_item in self.inventory_data:
-                    if inventory_item.get('serial_number') == serial_number:
-                        inventory_item[field_name] = new_value
-                        break
-                self.save_data()
+                serial_number = current_values[2] if len(current_values) > 2 else None
+                if serial_number:
+                    for inventory_item in self.inventory_data:
+                        if inventory_item.get('serial_number') == serial_number:
+                            inventory_item[field_name] = new_value
+                            break
+                    self.save_data()
 
             def cancel_edit(event=None):
                 entry_edit.destroy()
