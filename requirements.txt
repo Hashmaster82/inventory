@@ -1,3 +1,5 @@
 pandas
-fpdf
+openpyxl
+fpdf2
 gitpython
+matplotlib
