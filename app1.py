@@ -46,6 +46,7 @@ class PDFWithCyrillic(FPDF):
             else:
                 raise FileNotFoundError(f"Шрифт не найден ни в корне проекта, ни в assets/fonts/: {filename}")
 
+
 # ----------------- Основной класс приложения -----------------
 class InventoryApp:
     def __init__(self, root):
@@ -55,7 +56,7 @@ class InventoryApp:
         self.default_font = tkFont.Font(family='Arial', size=14)
         self.root.option_add("*Font", self.default_font)
         # Пути к файлам
-        self.inventory_file = r"D:\PyProjects\inventory_data\inventory.json"
+        self.inventory_file = r"\\fs\SHARE_BH\it\inventory\inventory.json"
         self.equipment_types_file = "equipment_types.json"
         self.history_file = "history.json"
         # Убедимся, что каталог для inventory.json существует
@@ -450,6 +451,7 @@ class InventoryApp:
         entry = ttk.Entry(dialog, width=45, font=self.default_font)
         entry.pack(pady=10)
         entry.focus()
+
         def on_add():
             name = entry.get().strip()
             if name:
@@ -458,6 +460,7 @@ class InventoryApp:
                     dialog.destroy()
             else:
                 messagebox.showwarning("Предупреждение", "Имя сотрудника не может быть пустым.", parent=dialog)
+
         btn_frame = ttk.Frame(dialog)
         btn_frame.pack(pady=15)
         ttk.Button(btn_frame, text="Добавить", command=on_add, style='Small.TButton').pack(side='left', padx=5)
@@ -515,14 +518,12 @@ class InventoryApp:
         self.employee_combo.grid(row=0, column=1, columnspan=3, padx=10, pady=5, sticky='we')
         self.bind_clipboard_events(self.employee_combo)
         self.employee_combo.bind('<<ComboboxSelected>>', self.show_employee_equipment)
-
         # --- НОВОЕ ПОЛЕ ПОИСКА СОТРУДНИКОВ ---
         ttk.Label(self.employee_frame, text="Поиск сотрудника:", font=self.default_font).grid(row=1, column=0, sticky='w', padx=10, pady=5)
         self.employee_search_var = tk.StringVar()
         self.employee_search_entry = ttk.Entry(self.employee_frame, textvariable=self.employee_search_var, width=50, font=self.default_font)
         self.employee_search_entry.grid(row=1, column=1, columnspan=3, padx=10, pady=5, sticky='we')
         self.employee_search_entry.bind('<KeyRelease>', self.filter_employees_by_search)
-
         # Кнопки под комбобоксом — в горизонтальном фрейме
         btn_frame_employees = ttk.Frame(self.employee_frame)
         btn_frame_employees.grid(row=2, column=0, columnspan=4, padx=10, pady=10, sticky='w')
@@ -535,7 +536,6 @@ class InventoryApp:
         refresh_button = ttk.Button(btn_frame_employees, text="🔄 Обновить",
                                     command=self.refresh_employee_list, style='Small.TButton')
         refresh_button.pack(side='left', padx=10)
-
         columns = ("Тип", "Модель", "Серийный номер", "Дата", "Комментарии")
         self.employee_tree = ttk.Treeview(self.employee_frame, columns=columns, show='headings', height=15)
         for col in columns:
@@ -743,24 +743,22 @@ class InventoryApp:
                                                width=25, font=self.default_font)
         self.history_type_combo.grid(row=0, column=1, padx=(0, 10), sticky='we')
         self.history_type_combo.bind('<<ComboboxSelected>>', self.update_serial_combobox)
+
         ttk.Label(search_frame, text="Серийный номер:", font=self.default_font).grid(row=0, column=2, sticky='w',
                                                                                      padx=(10, 10))
-        self.history_serial_input_var = tk.StringVar()
-        self.history_serial_input = ttk.Entry(search_frame, textvariable=self.history_serial_input_var,
-                                              width=25, font=self.default_font)
-        self.history_serial_input.grid(row=0, column=3, padx=(0, 10), sticky='we')
-        self.history_serial_input.bind('<KeyRelease>', self.filter_serial_numbers_by_input)
+        # УДАЛЕННЫЙ КОД: поле ввода и связанные переменные
         self.history_serial_combo_var = tk.StringVar()
         self.history_serial_combo = ttk.Combobox(search_frame, textvariable=self.history_serial_combo_var,
                                                  values=[], width=25, font=self.default_font)
-        self.history_serial_combo.grid(row=0, column=4, padx=(0, 10), sticky='we')
+        self.history_serial_combo.grid(row=0, column=3, padx=(0, 10), sticky='we')
         self.history_serial_combo.bind('<<ComboboxSelected>>', self.show_history_for_equipment)
+
         refresh_btn = ttk.Button(search_frame, text="🔄 Обновить", command=self.update_serial_combobox,
                                  style='Small.TButton')
-        refresh_btn.grid(row=0, column=5, padx=(10, 0))
+        refresh_btn.grid(row=0, column=4, padx=(10, 0))
+
         search_frame.columnconfigure(1, weight=1)
         search_frame.columnconfigure(3, weight=1)
-        search_frame.columnconfigure(4, weight=1)
 
         # --- ОБНОВЛЁННЫЙ СПИСОК СТОЛБЦОВ: ДОБАВЛЕН "Тип оборудования" ---
         columns = ("Тип оборудования", "Серийный номер", "Сотрудник", "Дата закрепления")
@@ -777,28 +775,12 @@ class InventoryApp:
         self.history_tree.configure(yscrollcommand=scrollbar.set)
         self.history_tree.pack(side='left', fill='both', expand=True, padx=10, pady=10)
         scrollbar.pack(side='right', fill='y')
-
         export_hist_btn = ttk.Button(frame, text="📥 Экспорт истории в Excel",
                                      command=self.export_history_to_excel, style='Small.TButton')
         export_hist_btn.pack(pady=10)
-
         self.update_history_combobox()
 
-    def filter_serial_numbers_by_input(self, event=None):
-        """Фильтрует серийные номера по введённому тексту в реальном времени"""
-        search_term = self.history_serial_input_var.get().lower().strip()
-        filtered_serials = self.get_filtered_serial_numbers()
-        if search_term:
-            matching_serials = [serial for serial in filtered_serials if search_term in serial.lower()]
-        else:
-            matching_serials = filtered_serials
-        self.history_serial_combo['values'] = matching_serials
-        if matching_serials:
-            self.history_serial_combo_var.set(matching_serials[0])
-        else:
-            self.history_serial_combo_var.set('')
-        if len(search_term) >= 3 and search_term in filtered_serials:
-            self.show_history_for_equipment()
+    # УДАЛЕН метод filter_serial_numbers_by_input
 
     def get_filtered_serial_numbers(self):
         """Возвращает отфильтрованный список серийных номеров в зависимости от выбранного типа оборудования"""
@@ -815,7 +797,6 @@ class InventoryApp:
         """Обновляет список серийных номеров в зависимости от выбранного типа оборудования"""
         serials = self.get_filtered_serial_numbers()
         self.history_serial_combo['values'] = serials
-        self.history_serial_input_var.set('')
         if serials:
             self.history_serial_combo_var.set(serials[0])
         else:
@@ -823,24 +804,18 @@ class InventoryApp:
         self.show_history_for_equipment()
 
     def show_history_for_equipment(self, event=None):
-        # Приоритет: если введен текст в поле ввода, используем его
-        if self.history_serial_input_var.get().strip():
-            serial = self.history_serial_input_var.get().strip()
-        else:
-            # Иначе используем значение из выпадающего списка
-            serial = self.history_serial_combo_var.get().strip()
+        # Теперь используем только значение из выпадающего списка
+        serial = self.history_serial_combo_var.get().strip()
         if not serial:
             for item in self.history_tree.get_children():
                 self.history_tree.delete(item)
             return
-
         # Находим тип оборудования по серийному номеру
         eq_type = "-"
         for item in self.inventory_data:
             if item.get('serial_number') == serial:
                 eq_type = item.get('equipment_type', '-')
                 break
-
         history_list = self.get_history_for_equipment(serial)
         for item in self.history_tree.get_children():
             self.history_tree.delete(item)
@@ -884,7 +859,6 @@ class InventoryApp:
             if not filename:
                 return
             df.to_excel(filename, index=False, engine='openpyxl')
-
             # --- АВТОПОДБОР ШИРИНЫ СТОЛБЦОВ ---
             from openpyxl import load_workbook
             wb = load_workbook(filename)
@@ -936,7 +910,6 @@ class InventoryApp:
         about_text.insert('1.0', info_text)
         about_text.config(state='disabled')
         about_text.pack(pady=20, padx=20, expand=True)
-        # --- КНОПКА "ЗАКРЫТЬ" УДАЛЕНА ---
 
     # =============== ОБЩИЕ МЕТОДЫ ===============
     def treeview_sort_column(self, tree, col, reverse):
@@ -1200,6 +1173,7 @@ class InventoryApp:
             text_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3] * 3)
             text_edit.focus()
             self.bind_clipboard_events(text_edit)
+
             def save_edit(event=None):
                 new_value = text_edit.get('1.0', tk.END).strip()
                 text_edit.destroy()
@@ -1208,8 +1182,10 @@ class InventoryApp:
                 tree.item(item, values=current_values)
                 self.inventory_data[data_index][field_name] = new_value
                 self.save_data()
+
             def cancel_edit(event=None):
                 text_edit.destroy()
+
             text_edit.bind('<Return>', save_edit)
             text_edit.bind('<Escape>', cancel_edit)
             text_edit.bind('<FocusOut>', lambda e: save_edit())
@@ -1225,6 +1201,7 @@ class InventoryApp:
             combo_edit.set(current_value)  # Устанавливаем текущее значение
             combo_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
             combo_edit.focus()
+
             def save_edit(event=None):
                 new_value = combo_edit.get().strip()
                 combo_edit.destroy()
@@ -1240,8 +1217,10 @@ class InventoryApp:
                     self.add_to_history(serial_number, new_value, current_date)
                     print(f"[HISTORY CHANGE] Serial: {serial_number}, Changed from '{old_value}' to '{new_value}' on {current_date}")
                 self.save_data()
+
             def cancel_edit(event=None):
                 combo_edit.destroy()
+
             combo_edit.bind('<Return>', save_edit)
             combo_edit.bind('<Escape>', cancel_edit)
             combo_edit.bind('<FocusOut>', lambda e: save_edit())
@@ -1252,6 +1231,7 @@ class InventoryApp:
             entry_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
             entry_edit.focus()
             self.bind_clipboard_events(entry_edit)
+
             def save_edit(event=None):
                 new_value = entry_edit.get().strip()
                 entry_edit.destroy()
@@ -1260,8 +1240,10 @@ class InventoryApp:
                 tree.item(item, values=current_values)
                 self.inventory_data[data_index][field_name] = new_value
                 self.save_data()
+
             def cancel_edit(event=None):
                 entry_edit.destroy()
+
             entry_edit.bind('<Return>', save_edit)
             entry_edit.bind('<Escape>', cancel_edit)
             entry_edit.bind('<FocusOut>', lambda e: save_edit())
@@ -1593,10 +1575,12 @@ class InventoryApp:
     # =============== АВТОСОХРАНЕНИЕ ===============
     def schedule_auto_save(self):
         """Запускает цикл автосохранения каждые 5 минут"""
+
         def auto_save():
             if self.save_data():
                 print(f"[AUTO-SAVE] Данные сохранены в {datetime.now().strftime('%H:%M:%S')}")
             self.root.after(self.auto_save_interval, auto_save)
+
         self.root.after(self.auto_save_interval, auto_save)
 
     def _get_asset_path(self, filename):

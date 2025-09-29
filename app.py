@@ -285,15 +285,12 @@ class InventoryApp:
         def do_copy(event):
             widget.event_generate("<<Copy>>")
             return "break"
-
         def do_cut(event):
             widget.event_generate("<<Cut>>")
             return "break"
-
         def do_paste(event):
             widget.event_generate("<<Paste>>")
             return "break"
-
         widget.bind("<Control-c>", do_copy)
         widget.bind("<Control-x>", do_cut)
         widget.bind("<Control-v>", do_paste)
@@ -451,7 +448,6 @@ class InventoryApp:
         entry = ttk.Entry(dialog, width=45, font=self.default_font)
         entry.pack(pady=10)
         entry.focus()
-
         def on_add():
             name = entry.get().strip()
             if name:
@@ -460,7 +456,6 @@ class InventoryApp:
                     dialog.destroy()
             else:
                 messagebox.showwarning("Предупреждение", "Имя сотрудника не может быть пустым.", parent=dialog)
-
         btn_frame = ttk.Frame(dialog)
         btn_frame.pack(pady=15)
         ttk.Button(btn_frame, text="Добавить", command=on_add, style='Small.TButton').pack(side='left', padx=5)
@@ -500,6 +495,9 @@ class InventoryApp:
         export_pdf_btn = ttk.Button(self.search_frame, text="📄 Экспорт результатов поиска в PDF",
                                     command=self.export_search_results_to_pdf, style='Small.TButton')
         export_pdf_btn.grid(row=2, column=0, columnspan=5, pady=10, sticky='we')
+        export_excel_btn = ttk.Button(self.search_frame, text="📊 Экспорт результатов поиска в Excel",
+                                      command=self.export_search_results_to_excel, style='Small.TButton')
+        export_excel_btn.grid(row=3, column=0, columnspan=5, pady=5, sticky='we')
         self.search_context_menu = tk.Menu(self.search_tree, tearoff=0)
         self.search_context_menu.add_command(label="Удалить запись", command=self.delete_selected_item)
         self.search_frame.columnconfigure(1, weight=1)
@@ -552,6 +550,9 @@ class InventoryApp:
         export_pdf_btn = ttk.Button(self.employee_frame, text="📄 Экспорт в PDF",
                                     command=self.export_employee_results_to_pdf, style='Small.TButton')
         export_pdf_btn.grid(row=4, column=0, columnspan=4, pady=10, sticky='we')
+        export_excel_btn = ttk.Button(self.employee_frame, text="📊 Экспорт в Excel",
+                                      command=self.export_employee_results_to_excel, style='Small.TButton')
+        export_excel_btn.grid(row=5, column=0, columnspan=4, pady=5, sticky='we')
         self.employee_context_menu = tk.Menu(self.employee_tree, tearoff=0)
         self.employee_context_menu.add_command(label="Удалить запись", command=self.delete_selected_item)
         self.employee_frame.columnconfigure(1, weight=1)
@@ -743,7 +744,6 @@ class InventoryApp:
                                                width=25, font=self.default_font)
         self.history_type_combo.grid(row=0, column=1, padx=(0, 10), sticky='we')
         self.history_type_combo.bind('<<ComboboxSelected>>', self.update_serial_combobox)
-
         ttk.Label(search_frame, text="Серийный номер:", font=self.default_font).grid(row=0, column=2, sticky='w',
                                                                                      padx=(10, 10))
         # УДАЛЕННЫЙ КОД: поле ввода и связанные переменные
@@ -752,14 +752,11 @@ class InventoryApp:
                                                  values=[], width=25, font=self.default_font)
         self.history_serial_combo.grid(row=0, column=3, padx=(0, 10), sticky='we')
         self.history_serial_combo.bind('<<ComboboxSelected>>', self.show_history_for_equipment)
-
         refresh_btn = ttk.Button(search_frame, text="🔄 Обновить", command=self.update_serial_combobox,
                                  style='Small.TButton')
         refresh_btn.grid(row=0, column=4, padx=(10, 0))
-
         search_frame.columnconfigure(1, weight=1)
         search_frame.columnconfigure(3, weight=1)
-
         # --- ОБНОВЛЁННЫЙ СПИСОК СТОЛБЦОВ: ДОБАВЛЕН "Тип оборудования" ---
         columns = ("Тип оборудования", "Серийный номер", "Сотрудник", "Дата закрепления")
         self.history_tree = ttk.Treeview(frame, columns=columns, show='headings', height=15)
@@ -781,7 +778,6 @@ class InventoryApp:
         self.update_history_combobox()
 
     # УДАЛЕН метод filter_serial_numbers_by_input
-
     def get_filtered_serial_numbers(self):
         """Возвращает отфильтрованный список серийных номеров в зависимости от выбранного типа оборудования"""
         selected_type = self.history_type_var.get()
@@ -889,7 +885,7 @@ class InventoryApp:
         center_frame.pack(expand=True, fill='both')
         info_text = """
         Система инвентаризации оборудования
-        Версия: 0.9 (обновлённая)
+        Версия: 1.0
         Разработано: Разин Григорий
         Контактная информация:
         Email: lantester35@gmail.com
@@ -1173,7 +1169,6 @@ class InventoryApp:
             text_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3] * 3)
             text_edit.focus()
             self.bind_clipboard_events(text_edit)
-
             def save_edit(event=None):
                 new_value = text_edit.get('1.0', tk.END).strip()
                 text_edit.destroy()
@@ -1182,10 +1177,8 @@ class InventoryApp:
                 tree.item(item, values=current_values)
                 self.inventory_data[data_index][field_name] = new_value
                 self.save_data()
-
             def cancel_edit(event=None):
                 text_edit.destroy()
-
             text_edit.bind('<Return>', save_edit)
             text_edit.bind('<Escape>', cancel_edit)
             text_edit.bind('<FocusOut>', lambda e: save_edit())
@@ -1201,7 +1194,6 @@ class InventoryApp:
             combo_edit.set(current_value)  # Устанавливаем текущее значение
             combo_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
             combo_edit.focus()
-
             def save_edit(event=None):
                 new_value = combo_edit.get().strip()
                 combo_edit.destroy()
@@ -1217,10 +1209,8 @@ class InventoryApp:
                     self.add_to_history(serial_number, new_value, current_date)
                     print(f"[HISTORY CHANGE] Serial: {serial_number}, Changed from '{old_value}' to '{new_value}' on {current_date}")
                 self.save_data()
-
             def cancel_edit(event=None):
                 combo_edit.destroy()
-
             combo_edit.bind('<Return>', save_edit)
             combo_edit.bind('<Escape>', cancel_edit)
             combo_edit.bind('<FocusOut>', lambda e: save_edit())
@@ -1231,7 +1221,6 @@ class InventoryApp:
             entry_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
             entry_edit.focus()
             self.bind_clipboard_events(entry_edit)
-
             def save_edit(event=None):
                 new_value = entry_edit.get().strip()
                 entry_edit.destroy()
@@ -1240,10 +1229,8 @@ class InventoryApp:
                 tree.item(item, values=current_values)
                 self.inventory_data[data_index][field_name] = new_value
                 self.save_data()
-
             def cancel_edit(event=None):
                 entry_edit.destroy()
-
             entry_edit.bind('<Return>', save_edit)
             entry_edit.bind('<Escape>', cancel_edit)
             entry_edit.bind('<FocusOut>', lambda e: save_edit())
@@ -1328,6 +1315,111 @@ class InventoryApp:
                                  "Отсутствует модуль openpyxl. Установите его через pip:\npip install openpyxl")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось создать Excel отчет: {e}")
+
+    # =============== ЭКСПОРТ В EXCEL: ПОИСК ===============
+    def export_search_results_to_excel(self):
+        """Экспортирует результаты поиска в Excel"""
+        items = self.search_tree.get_children()
+        if not items:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+        try:
+            import pandas as pd
+            rows = []
+            for item in items:
+                values = self.search_tree.item(item, 'values')
+                rows.append({
+                    "Тип": values[0],
+                    "Модель": values[1],
+                    "Серийный номер": values[2],
+                    "Закрепление": values[3],
+                    "Дата": values[4],
+                    "Комментарии": values[5]
+                })
+            df = pd.DataFrame(rows)
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+                title="Сохранить результаты поиска в Excel",
+                initialdir=os.path.dirname(self.inventory_file)
+            )
+            if not filename:
+                return
+            df.to_excel(filename, index=False, engine='openpyxl')
+            # Автоподбор ширины столбцов
+            from openpyxl import load_workbook
+            wb = load_workbook(filename)
+            ws = wb.active
+            for col in ws.columns:
+                max_length = 0
+                column = col[0].column_letter
+                for cell in col:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = (max_length + 2)
+                ws.column_dimensions[column].width = adjusted_width
+            wb.save(filename)
+            webbrowser.open(filename)
+            messagebox.showinfo("Успех", f"Результаты поиска экспортированы:\n{filename}")
+        except ImportError:
+            messagebox.showerror("Ошибка", "Отсутствует модуль openpyxl. Установите его через pip:\npip install openpyxl")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось экспортировать в Excel:\n{e}")
+
+    # =============== ЭКСПОРТ В EXCEL: СОТРУДНИКИ ===============
+    def export_employee_results_to_excel(self):
+        """Экспортирует оборудование сотрудника в Excel"""
+        items = self.employee_tree.get_children()
+        if not items:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+        try:
+            import pandas as pd
+            rows = []
+            for item in items:
+                values = self.employee_tree.item(item, 'values')
+                rows.append({
+                    "Тип": values[0],
+                    "Модель": values[1],
+                    "Серийный номер": values[2],
+                    "Дата": values[3],
+                    "Комментарии": values[4]
+                })
+            df = pd.DataFrame(rows)
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+                title="Сохранить отчёт по сотруднику в Excel",
+                initialdir=os.path.dirname(self.inventory_file)
+            )
+            if not filename:
+                return
+            df.to_excel(filename, index=False, engine='openpyxl')
+            # Автоподбор ширины столбцов
+            from openpyxl import load_workbook
+            wb = load_workbook(filename)
+            ws = wb.active
+            for col in ws.columns:
+                max_length = 0
+                column = col[0].column_letter
+                for cell in col:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = (max_length + 2)
+                ws.column_dimensions[column].width = adjusted_width
+            wb.save(filename)
+            webbrowser.open(filename)
+            messagebox.showinfo("Успех", f"Отчёт по сотруднику экспортирован:\n{filename}")
+        except ImportError:
+            messagebox.showerror("Ошибка", "Отсутствует модуль openpyxl. Установите его через pip:\npip install openpyxl")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось экспортировать в Excel:\n{e}")
 
     # =============== ГРАФИК ===============
     def show_equipment_graph(self):
@@ -1575,12 +1667,10 @@ class InventoryApp:
     # =============== АВТОСОХРАНЕНИЕ ===============
     def schedule_auto_save(self):
         """Запускает цикл автосохранения каждые 5 минут"""
-
         def auto_save():
             if self.save_data():
                 print(f"[AUTO-SAVE] Данные сохранены в {datetime.now().strftime('%H:%M:%S')}")
             self.root.after(self.auto_save_interval, auto_save)
-
         self.root.after(self.auto_save_interval, auto_save)
 
     def _get_asset_path(self, filename):
