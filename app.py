@@ -7,52 +7,87 @@ from fpdf import FPDF
 import webbrowser
 import tkinter.font as tkFont
 import sys
+import logging
+from pathlib import Path
+from typing import List, Dict, Any, Optional
 
-# ----------------- Класс PDF с поддержкой кириллицы -----------------
+# ----------------- Настройка логирования -----------------
+logger = logging.getLogger("InventoryApp")
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler = logging.FileHandler("inventory_app.log", encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(formatter)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# ----------------- Вспомогательные функции -----------------
+def _get_asset_path(filename: str) -> str:
+    """Универсальный метод поиска asset-файлов (для шрифтов и т.п.)."""
+    if getattr(sys, 'frozen', False):
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).parent
+    candidates = [
+        base_path / 'assets' / 'fonts' / filename,
+        base_path / filename
+    ]
+    for path in candidates:
+        if path.exists():
+            return str(path)
+    raise FileNotFoundError(f"Файл не найден: {filename} в путях: {[str(p) for p in candidates]}")
+
+def _safe_save_json(data: Any, filepath: Path) -> bool:
+    """Сохраняет данные в JSON с использованием временного файла."""
+    try:
+        temp_file = filepath.with_suffix(filepath.suffix + ".tmp")
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        temp_file.replace(filepath)
+        logger.info(f"Файл сохранён: {filepath}")
+        return True
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Не удалось сохранить файл {filepath.name}: {e}")
+        logger.error(f"Save {filepath}: {e}")
+        return False
+
+# ----------------- Класс PDF с поддержкой кириллицы и нумерацией страниц -----------------
 class PDFWithCyrillic(FPDF):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        font_path = self._get_asset_path('ChakraPetch-Regular.ttf')
-        if not os.path.exists(font_path):
-            font_path = self._get_asset_path('assets/fonts/ChakraPetch-Regular.ttf')
-            if not os.path.exists(font_path):
-                raise FileNotFoundError(f"Шрифт не найден ни в корне проекта, ни в assets/fonts/: {font_path}")
+        font_path = _get_asset_path('ChakraPetch-Regular.ttf')
         self.add_font('ChakraPetch', '', font_path, uni=True)
+        self.alias_nb_pages()
 
-    def _get_asset_path(self, filename):
-        if getattr(sys, 'frozen', False):
-            base_path = sys._MEIPASS
-            path1 = os.path.join(base_path, 'assets', 'fonts', filename)
-            path2 = os.path.join(base_path, filename)
-            if os.path.exists(path1):
-                return path1
-            elif os.path.exists(path2):
-                return path2
-            else:
-                raise FileNotFoundError(f"Шрифт не найден в MEIPASS: {filename}")
-        else:
-            base_path = os.path.dirname(__file__)
-            path1 = os.path.join(base_path, filename)
-            path2 = os.path.join(base_path, 'assets', 'fonts', filename)
-            if os.path.exists(path1):
-                return path1
-            elif os.path.exists(path2):
-                return path2
-            else:
-                raise FileNotFoundError(f"Шрифт не найден ни в корне проекта, ни в assets/fonts/: {filename}")
-
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('ChakraPetch', '', 10)
+        self.cell(0, 10, f'Страница {self.page_no()} из {{nb}}', 0, 0, 'C')
 
 # ----------------- Основной класс приложения -----------------
 class InventoryApp:
-    def __init__(self, root):
+    def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Система инвентаризации оборудования")
         self.root.state('zoomed')
+        # === Установка иконки приложения ===
+        try:
+            icon_path = Path(__file__).parent / "app.ico"
+            if icon_path.exists():
+                self.root.iconbitmap(str(icon_path))
+            else:
+                logger.warning("Файл иконки app.ico не найден")
+        except Exception as e:
+            logger.error(f"Не удалось установить иконку: {e}")
+
         self.default_font = tkFont.Font(family='Arial', size=14)
         self.root.option_add("*Font", self.default_font)
 
         # === Настройки: загрузка или выбор каталога данных ===
-        self.settings_file = os.path.join(os.path.dirname(__file__), "settings.json")
+        self.settings_file = Path(__file__).parent / "settings.json"
         self.data_dir = self.load_settings()
         if not self.data_dir:
             self.data_dir = self.choose_data_directory_on_start()
@@ -63,51 +98,99 @@ class InventoryApp:
             self.save_settings(self.data_dir)
 
         # === Пути к файлам (все в self.data_dir) ===
-        self.inventory_file = os.path.join(self.data_dir, "inventory.json")
-        self.equipment_types_file = os.path.join(self.data_dir, "equipment_types.json")
-        self.history_file = os.path.join(self.data_dir, "history.json")
-        self.employees_file = os.path.join(self.data_dir, "sotrudniki.json")
+        self.inventory_file = self.data_dir / "inventory.json"
+        self.equipment_types_file = self.data_dir / "equipment_types.json"
+        self.history_file = self.data_dir / "history.json"
+        self.employees_file = self.data_dir / "sotrudniki.json"
+        self.data_dir.mkdir(exist_ok=True)
 
-        os.makedirs(self.data_dir, exist_ok=True)
         self.inventory_data = self.load_data()
         self.equipment_types = self.load_equipment_types()
         self.history_data = self.load_history()
         self.employees_list = self.load_employees()
 
+        self.unsaved_changes = False
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        # === Для редактирования записи ===
+        self.current_edit_index = None
+        self.edit_entries = {}
         self.create_widgets()
-        self.auto_save_interval = 300000
+        self.update_window_title()
+        self.auto_save_interval = 300000  # 5 минут
         self.schedule_auto_save()
 
-    # =============== РАБОТА С НАСТРОЙКАМИ (settings.json) ===============
-    def load_settings(self):
+        # Клавиатурные сокращения
+        self.root.bind('<Control-s>', lambda e: self.save_data() and self.mark_saved())
+        self.root.bind('<Control-f>', lambda e: self.search_entry.focus_set())
+        self.root.bind('<Delete>', self.delete_selected_item)
+
+        # Статусная строка
+        self.status_var = tk.StringVar(value="Готово")
+        self.status_bar = ttk.Label(root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def update_window_title(self):
+        base_title = "Система инвентаризации оборудования"
+        suffix = "*" if self.unsaved_changes else ""
+        self.root.title(base_title + suffix)
+
+    def mark_saved(self):
+        self.unsaved_changes = False
+        self.update_window_title()
+
+    def on_closing(self):
+        if self.unsaved_changes:
+            answer = messagebox.askyesnocancel(
+                "Несохранённые изменения",
+                "Есть несохранённые изменения. Сохранить перед выходом?"
+            )
+            if answer is True:
+                if self.save_data():
+                    self.root.destroy()
+            elif answer is False:
+                self.root.destroy()
+        else:
+            self.root.destroy()
+
+    def is_serial_number_unique(self, serial_number: str, exclude_index: Optional[int] = None) -> bool:
+        for i, item in enumerate(self.inventory_data):
+            if exclude_index is not None and i == exclude_index:
+                continue
+            if item.get('serial_number') == serial_number:
+                return False
+        return True
+
+    # =============== РАБОТА С НАСТРОЙКАМИ ===============
+    def load_settings(self) -> Optional[Path]:
         try:
-            if os.path.exists(self.settings_file):
+            if self.settings_file.exists():
                 with open(self.settings_file, 'r', encoding='utf-8') as f:
                     settings = json.load(f)
                     data_dir = settings.get("data_directory")
-                    if data_dir and os.path.isdir(data_dir):
-                        return data_dir
+                    if data_dir and Path(data_dir).is_dir():
+                        return Path(data_dir)
         except Exception as e:
-            print(f"[ERROR] Load settings: {e}")
+            logger.error(f"Load settings: {e}")
         return None
 
-    def save_settings(self, data_dir):
+    def save_settings(self, data_dir: Path):
         try:
             with open(self.settings_file, 'w', encoding='utf-8') as f:
-                json.dump({"data_directory": data_dir}, f, ensure_ascii=False, indent=2)
+                json.dump({"data_directory": str(data_dir)}, f, ensure_ascii=False, indent=2)
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить настройки: {e}")
-            print(f"[ERROR] Save settings: {e}")
+            logger.error(f"Save settings: {e}")
 
-    def choose_data_directory_on_start(self):
+    def choose_data_directory_on_start(self) -> Optional[Path]:
         messagebox.showinfo("Первый запуск", "Пожалуйста, выберите каталог для хранения данных инвентаризации.")
         directory = filedialog.askdirectory(title="Выберите каталог для хранения данных")
-        return directory
+        return Path(directory) if directory else None
 
     # =============== РАБОТА С ТИПАМИ ОБОРУДОВАНИЯ ===============
-    def load_equipment_types(self):
+    def load_equipment_types(self) -> List[str]:
         try:
-            if os.path.exists(self.equipment_types_file):
+            if self.equipment_types_file.exists():
                 with open(self.equipment_types_file, 'r', encoding='utf-8') as file:
                     data = json.load(file)
                     return data if isinstance(data, list) else []
@@ -117,23 +200,16 @@ class InventoryApp:
                 return default_types
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить типы оборудования: {e}")
-            print(f"[ERROR] Load equipment types: {e}")
+            logger.error(f"Load equipment types: {e}")
             return []
 
-    def save_equipment_types(self, types_list):
-        try:
-            with open(self.equipment_types_file, 'w', encoding='utf-8') as file:
-                json.dump(types_list, file, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось сохранить типы оборудования: {e}")
-            print(f"[ERROR] Save equipment types: {e}")
-            return False
+    def save_equipment_types(self, types_list: List[str]) -> bool:
+        return _safe_save_json(types_list, self.equipment_types_file)
 
     # =============== РАБОТА СО СПИСКОМ СОТРУДНИКОВ ===============
-    def load_employees(self):
+    def load_employees(self) -> List[str]:
         try:
-            if os.path.exists(self.employees_file):
+            if self.employees_file.exists():
                 with open(self.employees_file, 'r', encoding='utf-8') as file:
                     data = json.load(file)
                     return data if isinstance(data, list) else []
@@ -142,20 +218,13 @@ class InventoryApp:
                 return []
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить список сотрудников: {e}")
-            print(f"[ERROR] Load employees: {e}")
+            logger.error(f"Load employees: {e}")
             return []
 
-    def save_employees(self, employees_list):
-        try:
-            with open(self.employees_file, 'w', encoding='utf-8') as file:
-                json.dump(employees_list, file, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось сохранить список сотрудников: {e}")
-            print(f"[ERROR] Save employees: {e}")
-            return False
+    def save_employees(self, employees_list: List[str]) -> bool:
+        return _safe_save_json(employees_list, self.employees_file)
 
-    def add_employee(self, employee_name):
+    def add_employee(self, employee_name: str) -> bool:
         if not employee_name.strip():
             return False
         employee_name = employee_name.strip()
@@ -163,10 +232,13 @@ class InventoryApp:
             messagebox.showwarning("Предупреждение", "Этот сотрудник уже существует.")
             return False
         self.employees_list.append(employee_name)
-        self.save_employees(self.employees_list)
-        return True
+        if self.save_employees(self.employees_list):
+            self.unsaved_changes = True
+            self.update_window_title()
+            return True
+        return False
 
-    def delete_employee(self, employee_name):
+    def delete_employee(self, employee_name: str) -> bool:
         if not employee_name:
             return False
         in_use = any(item.get('assignment', '') == employee_name for item in self.inventory_data)
@@ -175,8 +247,10 @@ class InventoryApp:
             return False
         if messagebox.askyesno("Подтверждение", f"Удалить сотрудника '{employee_name}'?"):
             self.employees_list.remove(employee_name)
-            self.save_employees(self.employees_list)
-            return True
+            if self.save_employees(self.employees_list):
+                self.unsaved_changes = True
+                self.update_window_title()
+                return True
         return False
 
     def update_employee_comboboxes(self):
@@ -198,9 +272,9 @@ class InventoryApp:
             ))
 
     # =============== РАБОТА С ИСТОРИЕЙ ===============
-    def load_history(self):
+    def load_history(self) -> Dict[str, List[Dict[str, str]]]:
         try:
-            if os.path.exists(self.history_file):
+            if self.history_file.exists():
                 with open(self.history_file, 'r', encoding='utf-8') as file:
                     data = json.load(file)
                     return data if isinstance(data, dict) else {}
@@ -208,22 +282,13 @@ class InventoryApp:
                 return {}
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить историю: {e}")
-            print(f"[ERROR] Load history: {e}")
+            logger.error(f"Load history: {e}")
             return {}
 
-    def save_history(self):
-        try:
-            temp_file = self.history_file + ".tmp"
-            with open(temp_file, 'w', encoding='utf-8') as file:
-                json.dump(self.history_data, file, ensure_ascii=False, indent=2)
-            os.replace(temp_file, self.history_file)
-            return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось сохранить историю: {e}")
-            print(f"[ERROR] Save history: {e}")
-            return False
+    def save_history(self) -> bool:
+        return _safe_save_json(self.history_data, self.history_file)
 
-    def add_to_history(self, serial_number, assignment, date):
+    def add_to_history(self, serial_number: str, assignment: str, date: str):
         if not serial_number or not assignment:
             return
         if serial_number not in self.history_data:
@@ -233,13 +298,48 @@ class InventoryApp:
             self.history_data[serial_number].append(entry)
             self.save_history()
 
-    def get_history_for_equipment(self, serial_number):
+    def get_history_for_equipment(self, serial_number: str) -> List[Dict[str, str]]:
         return self.history_data.get(serial_number, [])
 
+    def initialize_history_from_inventory(self):
+        """Заполняет history.json начальными записями из inventory.json."""
+        if not self.inventory_data:
+            messagebox.showinfo("Информация", "Нет данных в инвентаризации для инициализации истории.")
+            return
+        updated = False
+        for item in self.inventory_data:
+            serial = item.get('serial_number')
+            assignment = item.get('assignment')
+            date = item.get('date')
+            if not serial or not assignment or not date:
+                continue
+            if serial not in self.history_data:
+                self.history_data[serial] = []
+            existing = any(rec.get('assignment') == assignment and rec.get('date') == date for rec in self.history_data[serial])
+            if not existing:
+                self.history_data[serial].append({"assignment": assignment, "date": date})
+                updated = True
+        if updated:
+            if self.save_history():
+                messagebox.showinfo("Успех", "История успешно инициализирована из текущих данных инвентаризации.")
+                self.show_full_history()
+            else:
+                messagebox.showerror("Ошибка", "Не удалось сохранить историю.")
+        else:
+            messagebox.showinfo("Информация", "История уже содержит все начальные записи.")
+
+    # =============== ВСПОМОГАТЕЛЬНЫЙ МЕТОД ДЛЯ ПОЛУЧЕНИЯ МОДЕЛИ ===============
+    def _get_model_by_serial(self, serial: str) -> str:
+        """Вспомогательная функция: получает модель по серийному номеру."""
+        for item in self.inventory_data:
+            if item.get('serial_number') == serial:
+                return item.get('model', '-')
+        return "-"
+
     # =============== ОСНОВНАЯ ЛОГИКА ===============
-    def load_data(self):
+    def load_data(self) -> List[Dict[str, Any]]:
         try:
-            if os.path.exists(self.inventory_file):
+            if self.inventory_file.exists():
                 with open(self.inventory_file, 'r', encoding='utf-8') as file:
                     data = json.load(file)
                     if not isinstance(data, list):
@@ -251,23 +351,19 @@ class InventoryApp:
                 return []
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось загрузить данные: {e}")
-            print(f"[ERROR] Load inventory data: {e}")
+            logger.error(f"Load inventory data: {e}")
             return []
 
-    def save_data(self):
-        try:
-            with open(self.inventory_file, 'w', encoding='utf-8') as file:
-                json.dump(self.inventory_data, file, ensure_ascii=False, indent=2)
+    def save_data(self) -> bool:
+        if _safe_save_json(self.inventory_data, self.inventory_file):
+            self.mark_saved()
             return True
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось сохранить данные: {e}")
-            print(f"[ERROR] Save inventory data: {e}")
-            return False
+        return False
 
     def create_backup(self):
         try:
-            backup_dir = os.path.join(self.data_dir, "backups")
-            os.makedirs(backup_dir, exist_ok=True)
+            backup_dir = self.data_dir / "backups"
+            backup_dir.mkdir(exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             files_to_backup = [
                 self.inventory_file,
@@ -277,32 +373,33 @@ class InventoryApp:
             ]
             backed_up = []
             for src_file in files_to_backup:
-                if os.path.exists(src_file):
-                    backup_name = os.path.basename(src_file).replace(".json", f"_backup_{timestamp}.json")
-                    dst_file = os.path.join(backup_dir, backup_name)
+                if src_file.exists():
+                    backup_name = src_file.name.replace(".json", f"_backup_{timestamp}.json")
+                    dst_file = backup_dir / backup_name
                     import shutil
                     shutil.copy2(src_file, dst_file)
                     backed_up.append(dst_file)
                 else:
-                    print(f"[INFO] Файл для бэкапа не найден: {src_file}")
+                    logger.info(f"Файл для бэкапа не найден: {src_file}")
+            all_backups = sorted(backup_dir.glob("*.json"), key=os.path.getmtime, reverse=True)
+            for old_backup in all_backups[10:]:
+                old_backup.unlink()
+                logger.info(f"Удалён старый бэкап: {old_backup}")
             if backed_up:
-                messagebox.showinfo("Успех", f"Резервные копии созданы:\n" + "\n".join(backed_up))
+                self.status_var.set("Резервные копии созданы")
+                messagebox.showinfo("Успех", f"Резервные копии созданы:\n" + "\n".join(map(str, backed_up)))
             else:
+                self.status_var.set("Нет файлов для резервного копирования")
                 messagebox.showwarning("Предупреждение", "Нет файлов для резервного копирования")
         except Exception as e:
+            self.status_var.set("Ошибка при создании резервной копии")
             messagebox.showerror("Ошибка", f"Не удалось создать резервную копию: {e}")
-            print(f"[ERROR] Create backup: {e}")
+            logger.error(f"Create backup: {e}")
 
     def bind_clipboard_events(self, widget):
-        def do_copy(event):
-            widget.event_generate("<<Copy>>")
-            return "break"
-        def do_cut(event):
-            widget.event_generate("<<Cut>>")
-            return "break"
-        def do_paste(event):
-            widget.event_generate("<<Paste>>")
-            return "break"
+        def do_copy(event): widget.event_generate("<<Copy>>"); return "break"
+        def do_cut(event): widget.event_generate("<<Cut>>"); return "break"
+        def do_paste(event): widget.event_generate("<<Paste>>"); return "break"
         widget.bind("<Control-c>", do_copy)
         widget.bind("<Control-x>", do_cut)
         widget.bind("<Control-v>", do_paste)
@@ -336,7 +433,6 @@ class InventoryApp:
         # ====== НАБОР ВКЛАДОК ======
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill='both', expand=True)
-
         style = ttk.Style()
         style.configure('Big.TButton', font=('Arial', 18, 'bold'))
         style.configure('TNotebook.Tab', font=('Arial', 16, 'bold'), padding=[20, 10])
@@ -404,11 +500,152 @@ class InventoryApp:
         self.all_tree.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
 
+        # === КОНТЕКСТНОЕ МЕНЮ: "Редактировать" НАВЕРХ ===
         self.all_context_menu = tk.Menu(self.all_tree, tearoff=0)
-        self.all_context_menu.add_command(label="Удалить запись", command=self.delete_selected_item)
+        self.all_context_menu.add_command(label="✏️ Редактировать", command=self.edit_selected_item)
         self.all_context_menu.add_command(label="Передать", command=self.transfer_selected_item)
+        self.all_context_menu.add_command(label="Удалить запись", command=self.delete_selected_item)
 
         self.show_all_data()
+
+        # === БЛОК РЕДАКТИРОВАНИЯ ВНИЗУ ===
+        edit_frame = ttk.LabelFrame(self.show_all_frame, text="Редактирование записи", padding=10)
+        edit_frame.pack(fill='x', padx=10, pady=(10, 0))
+
+        fields = [
+            ("Тип оборудования", "equipment_type"),
+            ("Модель", "model"),
+            ("Серийный номер", "serial_number"),
+            ("Закрепление", "assignment"),
+            ("Дата", "date"),
+            ("Комментарии", "comments")
+        ]
+        self.edit_entries = {}
+        for i, (label_text, field_name) in enumerate(fields):
+            label = ttk.Label(edit_frame, text=label_text + ":")
+            label.grid(row=i, column=0, sticky='w', padx=5, pady=3)
+            if field_name == "equipment_type":
+                var = tk.StringVar()
+                combo = ttk.Combobox(edit_frame, textvariable=var, values=sorted(self.equipment_types), width=30)
+                combo.grid(row=i, column=1, padx=5, pady=3, sticky='we')
+                self.edit_entries[field_name] = (var, combo)
+            elif field_name == "assignment":
+                var = tk.StringVar()
+                combo = ttk.Combobox(edit_frame, textvariable=var, values=[""] + sorted(self.employees_list), width=30)
+                combo.grid(row=i, column=1, padx=5, pady=3, sticky='we')
+                self.edit_entries[field_name] = (var, combo)
+            elif field_name == "comments":
+                text = scrolledtext.ScrolledText(edit_frame, width=40, height=3, font=('Arial', 12))
+                text.grid(row=i, column=1, padx=5, pady=3, sticky='we')
+                self.edit_entries[field_name] = text
+            else:
+                entry = ttk.Entry(edit_frame, width=40)
+                entry.grid(row=i, column=1, padx=5, pady=3, sticky='we')
+                self.edit_entries[field_name] = entry
+
+        # Кнопки
+        btn_frame = ttk.Frame(edit_frame)
+        btn_frame.grid(row=len(fields), column=0, columnspan=2, pady=10)
+        save_btn = ttk.Button(btn_frame, text="💾 Сохранить", command=self.save_edited_item, style='Small.TButton')
+        save_btn.pack(side='left', padx=5)
+        cancel_btn = ttk.Button(btn_frame, text="❌ Отмена", command=self.cancel_edit, style='Small.TButton')
+        cancel_btn.pack(side='left', padx=5)
+
+        edit_frame.columnconfigure(1, weight=1)
+
+    # =============== МЕТОДЫ РЕДАКТИРОВАНИЯ ===============
+    def edit_selected_item(self):
+        selected = self.all_tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите запись для редактирования")
+            return
+        values = self.all_tree.item(selected[0], 'values')
+        serial = values[2]
+        idx = next((i for i, item in enumerate(self.inventory_data) if item.get('serial_number') == serial), None)
+        if idx is None:
+            messagebox.showerror("Ошибка", "Запись не найдена в данных")
+            return
+        item = self.inventory_data[idx]
+        self.current_edit_index = idx
+        self.edit_entries['equipment_type'][0].set(item.get('equipment_type', ''))
+        self.edit_entries['model'].delete(0, tk.END)
+        self.edit_entries['model'].insert(0, item.get('model', ''))
+        self.edit_entries['serial_number'].delete(0, tk.END)
+        self.edit_entries['serial_number'].insert(0, item.get('serial_number', ''))
+        self.edit_entries['assignment'][0].set(item.get('assignment', ''))
+        self.edit_entries['date'].delete(0, tk.END)
+        self.edit_entries['date'].insert(0, item.get('date', ''))
+        if isinstance(self.edit_entries['comments'], scrolledtext.ScrolledText):
+            self.edit_entries['comments'].delete('1.0', tk.END)
+            self.edit_entries['comments'].insert('1.0', item.get('comments', ''))
+
+    def save_edited_item(self):
+        if self.current_edit_index is None:
+            return
+
+        item = self.inventory_data[self.current_edit_index]
+        new_data = {}
+        new_data['equipment_type'] = self.edit_entries['equipment_type'][0].get().strip()
+        new_data['model'] = self.edit_entries['model'].get().strip()
+        new_data['serial_number'] = self.edit_entries['serial_number'].get().strip()
+        new_data['assignment'] = self.edit_entries['assignment'][0].get().strip()
+        new_data['date'] = self.edit_entries['date'].get().strip()
+        new_data['comments'] = self.edit_entries['comments'].get('1.0', tk.END).strip()
+
+        if not new_data['equipment_type'] or not new_data['serial_number']:
+            messagebox.showwarning("Ошибка", "Тип и серийный номер обязательны")
+            return
+
+        if new_data['equipment_type'] not in self.equipment_types:
+            messagebox.showwarning("Ошибка", "Недопустимый тип оборудования")
+            return
+
+        if not self.is_serial_number_unique(new_data['serial_number'], exclude_index=self.current_edit_index):
+            messagebox.showerror("Ошибка", f"Серийный номер '{new_data['serial_number']}' уже существует!")
+            return
+
+        try:
+            datetime.strptime(new_data['date'], "%d.%m.%Y")
+        except ValueError:
+            messagebox.showerror("Ошибка", "Неверный формат даты. Используйте дд.мм.гггг")
+            return
+
+        old_assignment = item.get('assignment', '')
+        item.update(new_data)
+
+        if old_assignment != new_data['assignment'] and new_data['assignment']:
+            self.add_to_history(new_data['serial_number'], new_data['assignment'], new_data['date'])
+
+        # ИСПРАВЛЕНИЕ: НЕ ВЫЗЫВАЕМ show_all_data(), чтобы не перезагружать из файла!
+        # Вместо этого обновим дерево вручную или просто сохраним
+        if self.save_data():
+            messagebox.showinfo("Успех", "Запись обновлена")
+            self.cancel_edit()
+            # Обновим интерфейс без перезагрузки из файла
+            self.refresh_employee_list()
+            self.update_history_combobox()
+            self.update_serial_combobox()
+            # Обновим строку в таблице вручную (опционально, но для точности)
+            selected = self.all_tree.selection()
+            if selected:
+                self.all_tree.item(selected[0], values=(
+                    new_data['equipment_type'],
+                    new_data['model'],
+                    new_data['serial_number'],
+                    new_data['assignment'],
+                    new_data['date'],
+                    (new_data['comments'][:50] + '...') if len(new_data['comments']) > 50 else new_data['comments']
+                ))
+
+    def cancel_edit(self):
+        self.current_edit_index = None
+        for field, widget in self.edit_entries.items():
+            if field in ('equipment_type', 'assignment'):
+                widget[0].set('')
+            elif field == 'comments':
+                widget.delete('1.0', tk.END)
+            else:
+                widget.delete(0, tk.END)
 
     # =============== ВКЛАДКА: ПОИСК ОБОРУДОВАНИЯ ===============
     def create_search_tab(self):
@@ -465,8 +702,8 @@ class InventoryApp:
     # =============== ВКЛАДКА: СОТРУДНИКИ ===============
     def create_employee_tab(self):
         ttk.Label(self.employee_frame, text="Выберите сотрудника:", font=self.default_font).grid(row=0, column=0,
-                                                                                                sticky='w', padx=10,
-                                                                                                pady=5)
+                                                                                                 sticky='w', padx=10,
+                                                                                                 pady=5)
         self.employee_var = tk.StringVar()
         self.employee_combo = ttk.Combobox(self.employee_frame, textvariable=self.employee_var,
                                            values=[""] + sorted(self.employees_list), width=50, font=self.default_font)
@@ -475,8 +712,8 @@ class InventoryApp:
         self.employee_combo.bind('<<ComboboxSelected>>', self.show_employee_equipment)
 
         ttk.Label(self.employee_frame, text="Поиск сотрудника:", font=self.default_font).grid(row=1, column=0,
-                                                                                             sticky='w', padx=10,
-                                                                                             pady=5)
+                                                                                              sticky='w', padx=10,
+                                                                                              pady=5)
         self.employee_search_var = tk.StringVar()
         self.employee_search_entry = ttk.Entry(self.employee_frame, textvariable=self.employee_search_var, width=50,
                                                font=self.default_font)
@@ -484,37 +721,25 @@ class InventoryApp:
         self.employee_search_entry.bind('<KeyRelease>', self.filter_employees_by_search)
 
         btn_frame_employees = ttk.Frame(self.employee_frame)
-        btn_frame_employees.grid(row=2, column=0, columnspan=4, padx=10, pady=10, sticky='w')
+        btn_frame_employees.grid(row=2, column=0, columnspan=4, padx=10, pady=10, sticky='we')
+
         add_employee_btn = ttk.Button(btn_frame_employees, text="➕ Добавить сотрудника",
                                       command=self.open_add_employee_dialog, style='Small.TButton')
         add_employee_btn.pack(side='left', padx=(0, 10))
+
+        # === ИЗМЕНЕНИЕ: кнопка "Из базы" по правому краю + пояснение ===
         load_from_base_btn = ttk.Button(btn_frame_employees, text="📥 Из базы",
                                         command=self.load_employees_from_inventory, style='Small.TButton')
-        load_from_base_btn.pack(side='left', padx=10)
+        load_from_base_btn.pack(side='right', padx=10)
+
+        load_hint = ttk.Label(btn_frame_employees, text="Нажимаем только при первом запуске программы!", foreground="gray", font=('Arial', 10))
+        load_hint.pack(side='right', padx=(0, 10))
+
         refresh_button = ttk.Button(btn_frame_employees, text="🔄 Обновить",
                                     command=self.refresh_employee_list, style='Small.TButton')
         refresh_button.pack(side='left', padx=10)
 
-        ttk.Label(self.employee_frame, text="Список всех сотрудников:", font=self.default_font).grid(row=3, column=0,
-                                                                                                    sticky='w',
-                                                                                                    padx=10,
-                                                                                                    pady=(15, 5))
-        self.all_employees_listbox = tk.Listbox(self.employee_frame, font=self.default_font, height=8,
-                                                exportselection=False)
-        self.all_employees_listbox.grid(row=4, column=0, columnspan=4, padx=10, pady=5, sticky='nsew')
-        self.all_employees_listbox.bind('<Button-3>', self.show_employees_context_menu)
-        emp_scrollbar = ttk.Scrollbar(self.employee_frame, orient="vertical", command=self.all_employees_listbox.yview)
-        self.all_employees_listbox.configure(yscrollcommand=emp_scrollbar.set)
-        emp_scrollbar.grid(row=4, column=4, sticky='ns', pady=5)
-
-        self.employees_context_menu = tk.Menu(self.all_employees_listbox, tearoff=0)
-        self.employees_context_menu.add_command(label="✏️ Редактировать", command=self.edit_selected_employee)
-        self.employees_context_menu.add_command(label="🗑️ Удалить", command=self.delete_selected_employee)
-
-        export_employees_btn = ttk.Button(self.employee_frame, text="📤 Экспорт списка сотрудников в Excel",
-                                          command=self.export_employees_to_excel, style='Small.TButton')
-        export_employees_btn.grid(row=5, column=0, columnspan=4, pady=10, sticky='we')
-
+        # === ТАБЛИЦА ОБОРУДОВАНИЯ СОТРУДНИКА ===
         columns = ("Тип", "Модель", "Серийный номер", "Дата", "Комментарии")
         self.employee_tree = ttk.Treeview(self.employee_frame, columns=columns, show='headings', height=10)
         for col in columns:
@@ -528,24 +753,46 @@ class InventoryApp:
 
         tree_scrollbar = ttk.Scrollbar(self.employee_frame, orient="vertical", command=self.employee_tree.yview)
         self.employee_tree.configure(yscrollcommand=tree_scrollbar.set)
-        self.employee_tree.grid(row=6, column=0, columnspan=4, padx=10, pady=5, sticky='nsew')
-        tree_scrollbar.grid(row=6, column=4, sticky='ns', pady=5)
+        self.employee_tree.grid(row=3, column=0, columnspan=4, padx=10, pady=5, sticky='nsew')
+        tree_scrollbar.grid(row=3, column=4, sticky='ns', pady=5)
 
         export_pdf_btn = ttk.Button(self.employee_frame, text="📄 Экспорт в PDF",
                                     command=self.export_employee_results_to_pdf, style='Small.TButton')
-        export_pdf_btn.grid(row=7, column=0, columnspan=4, pady=10, sticky='we')
+        export_pdf_btn.grid(row=4, column=0, columnspan=4, pady=10, sticky='we')
 
         export_excel_btn = ttk.Button(self.employee_frame, text="📊 Экспорт в Excel",
                                       command=self.export_employee_results_to_excel, style='Small.TButton')
-        export_excel_btn.grid(row=8, column=0, columnspan=4, pady=5, sticky='we')
+        export_excel_btn.grid(row=5, column=0, columnspan=4, pady=5, sticky='we')
+
+        # === СПИСОК ВСЕХ СОТРУДНИКОВ — ПЕРЕНЕСЁН ВНИЗ ===
+        ttk.Label(self.employee_frame, text="Список всех сотрудников:", font=self.default_font).grid(row=6, column=0,
+                                                                                                     sticky='w',
+                                                                                                     padx=10,
+                                                                                                     pady=(20, 5))
+        self.all_employees_listbox = tk.Listbox(self.employee_frame, font=self.default_font, height=8,
+                                                exportselection=False)
+        self.all_employees_listbox.grid(row=7, column=0, columnspan=4, padx=10, pady=5, sticky='nsew')
+        self.all_employees_listbox.bind('<Button-3>', self.show_employees_context_menu)
+
+        emp_scrollbar = ttk.Scrollbar(self.employee_frame, orient="vertical", command=self.all_employees_listbox.yview)
+        self.all_employees_listbox.configure(yscrollcommand=emp_scrollbar.set)
+        emp_scrollbar.grid(row=7, column=4, sticky='ns', pady=5)
+
+        export_employees_btn = ttk.Button(self.employee_frame, text="📤 Экспорт списка сотрудников в Excel",
+                                          command=self.export_employees_to_excel, style='Small.TButton')
+        export_employees_btn.grid(row=8, column=0, columnspan=4, pady=(10, 0), sticky='we')
+
+        self.employees_context_menu = tk.Menu(self.all_employees_listbox, tearoff=0)
+        self.employees_context_menu.add_command(label="✏️ Редактировать", command=self.edit_selected_employee)
+        self.employees_context_menu.add_command(label="🗑️ Удалить", command=self.delete_selected_employee)
 
         self.employee_context_menu = tk.Menu(self.employee_tree, tearoff=0)
         self.employee_context_menu.add_command(label="Удалить запись", command=self.delete_selected_item)
         self.employee_context_menu.add_command(label="Передать", command=self.transfer_selected_item)
 
         self.employee_frame.columnconfigure(1, weight=1)
-        self.employee_frame.rowconfigure(4, weight=0)
-        self.employee_frame.rowconfigure(6, weight=1)
+        self.employee_frame.rowconfigure(3, weight=1)
+        self.employee_frame.rowconfigure(7, weight=0)
 
         self.refresh_employee_list()
 
@@ -616,6 +863,8 @@ class InventoryApp:
         if messagebox.askyesno("Подтверждение", f"Удалить сотрудника '{employee_name}'?"):
             self.employees_list.remove(employee_name)
             self.save_employees(self.employees_list)
+            self.unsaved_changes = True
+            self.update_window_title()
             self.update_employee_comboboxes()
 
     def export_employees_to_excel(self):
@@ -674,8 +923,11 @@ class InventoryApp:
                 self.employees_list.append(emp)
                 added_count += 1
         if self.save_employees(self.employees_list):
+            self.unsaved_changes = True
+            self.update_window_title()
             self.update_employee_comboboxes()
-            messagebox.showinfo("Успех", f"Из базы загружено {added_count} новых сотрудников.\nВсего сотрудников: {len(self.employees_list)}")
+            messagebox.showinfo("Успех",
+                                f"Из базы загружено {added_count} новых сотрудников.\nВсего сотрудников: {len(self.employees_list)}")
         else:
             messagebox.showerror("Ошибка", "Не удалось сохранить список сотрудников.")
 
@@ -688,36 +940,19 @@ class InventoryApp:
     # =============== ФУНКЦИЯ ПЕРЕДАЧИ ОБОРУДОВАНИЯ ===============
     def transfer_selected_item(self):
         current_tab = self.notebook.index(self.notebook.select())
-        if current_tab == 0:
-            tree = self.all_tree
-        elif current_tab == 2:
-            tree = self.search_tree
-        elif current_tab == 3:
-            tree = self.employee_tree
-        else:
+        tree = {0: self.all_tree, 2: self.search_tree, 3: self.employee_tree}.get(current_tab)
+        if not tree:
             return
-
         selected_items = tree.selection()
         if not selected_items:
             messagebox.showwarning("Предупреждение", "Выберите запись для передачи")
             return
-
         item_values = tree.item(selected_items[0], 'values')
         serial_number = item_values[2]
-        current_assignment = item_values[3]
-
-        # Найти запись в inventory_data
-        target_item = None
-        for inv_item in self.inventory_data:
-            if inv_item.get('serial_number') == serial_number:
-                target_item = inv_item
-                break
-
+        target_item = next((item for item in self.inventory_data if item.get('serial_number') == serial_number), None)
         if not target_item:
             messagebox.showerror("Ошибка", "Запись не найдена в базе")
             return
-
-        # Открыть диалог передачи
         self.open_transfer_dialog(target_item)
 
     def open_transfer_dialog(self, equipment_item):
@@ -727,9 +962,7 @@ class InventoryApp:
         dialog.transient(self.root)
         dialog.grab_set()
 
-        # Установим крупный шрифт
         large_font = tkFont.Font(family='Arial', size=16)
-        button_font = tkFont.Font(family='Arial', size=14)
 
         info_frame = ttk.LabelFrame(dialog, text="Информация об оборудовании", padding=15)
         info_frame.pack(fill='x', padx=20, pady=(20, 10))
@@ -742,9 +975,9 @@ class InventoryApp:
             ("Дата закрепления:", equipment_item.get('date', '')),
             ("Комментарии:", equipment_item.get('comments', ''))
         ]
-
         for i, (label_text, value) in enumerate(info_labels):
-            ttk.Label(info_frame, text=label_text, font=large_font).grid(row=i, column=0, sticky='w', padx=(0, 20), pady=5)
+            ttk.Label(info_frame, text=label_text, font=large_font).grid(row=i, column=0, sticky='w', padx=(0, 20),
+                                                                         pady=5)
             ttk.Label(info_frame, text=value, font=large_font, wraplength=500).grid(row=i, column=1, sticky='w', pady=5)
 
         transfer_frame = ttk.LabelFrame(dialog, text="Новое закрепление", padding=15)
@@ -766,45 +999,35 @@ class InventoryApp:
         def confirm_transfer():
             new_employee = new_employee_var.get().strip()
             transfer_date = date_var.get().strip()
-
             if not new_employee:
                 messagebox.showwarning("Ошибка", "Выберите сотрудника", parent=dialog)
                 return
-
             if not transfer_date:
                 messagebox.showwarning("Ошибка", "Укажите дату передачи", parent=dialog)
                 return
-
             try:
                 datetime.strptime(transfer_date, "%d.%m.%Y")
             except ValueError:
                 messagebox.showerror("Ошибка", "Неверный формат даты. Используйте дд.мм.гггг", parent=dialog)
                 return
 
-            # Обновляем запись в inventory_data
             old_assignment = equipment_item.get('assignment', '')
             equipment_item['assignment'] = new_employee
             equipment_item['date'] = transfer_date
-
-            # Добавляем в историю
             self.add_to_history(equipment_item['serial_number'], new_employee, transfer_date)
-
-            # Сохраняем
             self.save_data()
             self.save_history()
-
-            # Обновляем интерфейс
             self.show_all_data()
             self.refresh_employee_list()
             self.update_serial_combobox()
             self.update_history_combobox()
-
             messagebox.showinfo("Успех", f"Оборудование передано сотруднику {new_employee}", parent=dialog)
             dialog.destroy()
 
         btn_frame = ttk.Frame(dialog)
         btn_frame.pack(pady=20)
-        ttk.Button(btn_frame, text="Подтвердить", command=confirm_transfer, style='Big.TButton').pack(side='left', padx=10)
+        ttk.Button(btn_frame, text="Подтвердить", command=confirm_transfer, style='Big.TButton').pack(side='left',
+                                                                                                      padx=10)
         ttk.Button(btn_frame, text="Отмена", command=dialog.destroy, style='Big.TButton').pack(side='left', padx=10)
 
         dialog.wait_window()
@@ -820,26 +1043,25 @@ class InventoryApp:
             ("Комментарии", "comments")
         ]
         self.entries = {}
-        row_offset = 0
         for i, (label_text, field_name) in enumerate(fields):
             label = ttk.Label(self.add_frame, text=label_text + ":")
-            label.grid(row=i + row_offset, column=0, sticky='w', padx=10, pady=5)
+            label.grid(row=i, column=0, sticky='w', padx=10, pady=5)
             if field_name == "equipment_type":
                 self.equipment_type_var = tk.StringVar()
                 combo = ttk.Combobox(self.add_frame, textvariable=self.equipment_type_var,
                                      values=sorted(self.equipment_types), width=38, font=self.default_font)
-                combo.grid(row=i + row_offset, column=1, padx=10, pady=5, sticky='we')
+                combo.grid(row=i, column=1, padx=10, pady=5, sticky='we')
                 self.bind_clipboard_events(combo)
                 self.entries[field_name] = combo
             elif field_name == "comments":
                 entry = scrolledtext.ScrolledText(self.add_frame, width=40, height=4, font=self.default_font)
-                entry.grid(row=i + row_offset, column=1, padx=10, pady=5, sticky='we')
+                entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
                 self.bind_clipboard_events(entry)
                 self.entries[field_name] = entry
             elif field_name == "date":
                 entry = ttk.Entry(self.add_frame, width=40, font=self.default_font)
                 entry.insert(0, datetime.now().strftime("%d.%m.%Y"))
-                entry.grid(row=i + row_offset, column=1, padx=10, pady=5, sticky='we')
+                entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
                 self.bind_clipboard_events(entry)
                 self.entries[field_name] = entry
             elif field_name == "assignment":
@@ -847,21 +1069,20 @@ class InventoryApp:
                 self.assignment_combo = ttk.Combobox(self.add_frame, textvariable=self.assignment_var,
                                                      values=[""] + sorted(self.employees_list), width=38,
                                                      font=self.default_font)
-                self.assignment_combo.grid(row=i + row_offset, column=1, padx=10, pady=5, sticky='we')
+                self.assignment_combo.grid(row=i, column=1, padx=10, pady=5, sticky='we')
                 self.bind_clipboard_events(self.assignment_combo)
                 self.entries[field_name] = self.assignment_combo
             else:
                 entry = ttk.Entry(self.add_frame, width=40, font=self.default_font)
-                entry.grid(row=i + row_offset, column=1, padx=10, pady=5, sticky='we')
+                entry.grid(row=i, column=1, padx=10, pady=5, sticky='we')
                 self.bind_clipboard_events(entry)
                 self.entries[field_name] = entry
 
         add_button = ttk.Button(self.add_frame, text="Добавить оборудование",
                                 command=self.add_equipment, style='Big.TButton')
-        add_button.grid(row=len(fields) + row_offset, column=0, columnspan=2, pady=20)
+        add_button.grid(row=len(fields), column=0, columnspan=2, pady=20)
 
         self.add_frame.columnconfigure(1, weight=1)
-        self.add_frame.rowconfigure(len(fields) + row_offset, weight=1)
 
     def open_add_employee_dialog(self):
         dialog = tk.Toplevel(self.root)
@@ -899,6 +1120,7 @@ class InventoryApp:
         self.equipment_type_entry = ttk.Entry(frame, width=40, font=self.default_font)
         self.equipment_type_entry.grid(row=0, column=1, padx=10, pady=5, sticky='we')
         self.bind_clipboard_events(self.equipment_type_entry)
+
         add_btn = ttk.Button(frame, text="➕ Добавить тип", command=self.add_equipment_type, style='Small.TButton')
         add_btn.grid(row=0, column=2, padx=10, pady=5)
 
@@ -907,6 +1129,7 @@ class InventoryApp:
         self.equipment_tree.heading("Тип оборудования", text="Тип оборудования")
         self.equipment_tree.column("Тип оборудования", width=300, anchor='center')
         self.equipment_tree.bind('<Button-3>', self.show_equipment_context_menu)
+
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.equipment_tree.yview)
         self.equipment_tree.configure(yscrollcommand=scrollbar.set)
         self.equipment_tree.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky='nsew')
@@ -917,6 +1140,7 @@ class InventoryApp:
 
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(1, weight=1)
+
         self.refresh_equipment_list()
 
     def refresh_equipment_list(self):
@@ -938,6 +1162,8 @@ class InventoryApp:
             messagebox.showinfo("Успех", "Тип оборудования добавлен")
             self.equipment_type_entry.delete(0, tk.END)
             self.refresh_equipment_list()
+            self.unsaved_changes = True
+            self.update_window_title()
 
     def show_equipment_context_menu(self, event):
         item = self.equipment_tree.identify_row(event.y)
@@ -960,15 +1186,19 @@ class InventoryApp:
             if self.save_equipment_types(self.equipment_types):
                 messagebox.showinfo("Успех", "Тип оборудования удален")
                 self.refresh_equipment_list()
+                self.unsaved_changes = True
+                self.update_window_title()
 
     def create_settings_tab(self):
         frame = self.settings_frame
         ttk.Label(frame, text="Текущий каталог данных:", font=self.default_font).pack(pady=10)
-        self.current_path_label = ttk.Label(frame, text=self.data_dir, font=self.default_font, wraplength=800)
+        self.current_path_label = ttk.Label(frame, text=str(self.data_dir), font=self.default_font, wraplength=800)
         self.current_path_label.pack(pady=5)
+
         change_dir_btn = ttk.Button(frame, text="📁 Изменить каталог данных", command=self.choose_data_directory,
                                     style='Small.TButton')
         change_dir_btn.pack(pady=10)
+
         ttk.Label(frame, text="⚠️ Все файлы (inventory.json, history.json и др.) хранятся в этом каталоге",
                   font=self.default_font, foreground="red").pack(pady=10)
 
@@ -976,13 +1206,13 @@ class InventoryApp:
         directory = filedialog.askdirectory(title="Выберите каталог для хранения данных")
         if not directory:
             return
-        self.data_dir = directory
+        self.data_dir = Path(directory)
         self.save_settings(self.data_dir)
-        self.current_path_label.config(text=self.data_dir)
-        self.inventory_file = os.path.join(self.data_dir, "inventory.json")
-        self.history_file = os.path.join(self.data_dir, "history.json")
-        self.employees_file = os.path.join(self.data_dir, "sotrudniki.json")
-        self.equipment_types_file = os.path.join(self.data_dir, "equipment_types.json")
+        self.current_path_label.config(text=str(self.data_dir))
+        self.inventory_file = self.data_dir / "inventory.json"
+        self.history_file = self.data_dir / "history.json"
+        self.employees_file = self.data_dir / "sotrudniki.json"
+        self.equipment_types_file = self.data_dir / "equipment_types.json"
         self.inventory_data = self.load_data()
         self.history_data = self.load_history()
         self.employees_list = self.load_employees()
@@ -995,6 +1225,7 @@ class InventoryApp:
 
     def create_history_tab(self):
         frame = self.history_frame
+
         filter_frame = ttk.Frame(frame)
         filter_frame.pack(pady=10, fill='x', padx=10)
 
@@ -1004,7 +1235,8 @@ class InventoryApp:
         self.history_employee_combo = ttk.Combobox(
             filter_frame,
             textvariable=self.history_employee_var,
-            values=[""] + sorted(set(item.get('assignment', '') for item in self.inventory_data if item.get('assignment'))),
+            values=[""] + sorted(
+                set(item.get('assignment', '') for item in self.inventory_data if item.get('assignment'))),
             width=20,
             font=self.default_font
         )
@@ -1017,7 +1249,8 @@ class InventoryApp:
         self.history_type_combo = ttk.Combobox(
             filter_frame,
             textvariable=self.history_type_var,
-            values=[""] + sorted(set(item.get('equipment_type', '') for item in self.inventory_data if item.get('equipment_type'))),
+            values=[""] + sorted(
+                set(item.get('equipment_type', '') for item in self.inventory_data if item.get('equipment_type'))),
             width=20,
             font=self.default_font
         )
@@ -1047,11 +1280,19 @@ class InventoryApp:
         history_label = ttk.Label(frame, text="История (по фильтру):", font=self.default_font)
         history_label.pack(anchor='w', padx=10, pady=(10, 0))
 
-        columns = ("Тип оборудования", "Серийный номер", "Сотрудник", "Дата закрепления")
+        # === ДОБАВЛЕН СТОЛБЕЦ "Модель" ===
+        columns = ("Тип оборудования", "Модель", "Серийный номер", "Сотрудник", "Дата закрепления")
         self.history_tree = ttk.Treeview(frame, columns=columns, show='headings', height=10)
+        # Настройка ширины колонок
         for col in columns:
             self.history_tree.heading(col, text=col)
-            self.history_tree.column(col, width=180 if col == "Сотрудник" else 150, anchor='center')
+            if col == "Сотрудник":
+                width = 180
+            elif col == "Модель":
+                width = 200
+            else:
+                width = 150
+            self.history_tree.column(col, width=width, anchor='center')
 
         scrollbar1 = ttk.Scrollbar(frame, orient="vertical", command=self.history_tree.yview)
         self.history_tree.configure(yscrollcommand=scrollbar1.set)
@@ -1061,22 +1302,34 @@ class InventoryApp:
         export_filtered_frame = ttk.Frame(frame)
         export_filtered_frame.pack(pady=5, fill='x', padx=10)
         ttk.Button(export_filtered_frame, text="📥 Экспорт (по фильтру) в Excel",
-                   command=self.export_filtered_history_to_excel, style='Small.TButton').pack(side='left', padx=5, expand=True, fill='x')
+                   command=self.export_filtered_history_to_excel, style='Small.TButton').pack(side='left', padx=5,
+                                                                                              expand=True, fill='x')
         ttk.Button(export_filtered_frame, text="📄 Экспорт (по фильтру) в PDF",
-                   command=self.export_filtered_history_to_pdf, style='Small.TButton').pack(side='left', padx=5, expand=True, fill='x')
+                   command=self.export_filtered_history_to_pdf, style='Small.TButton').pack(side='left', padx=5,
+                                                                                            expand=True, fill='x')
 
         all_history_label = ttk.Label(frame, text="Вся история (из history.json):", font=self.default_font)
         all_history_label.pack(anchor='w', padx=10, pady=(10, 0))
 
-        self.full_history_tree = ttk.Treeview(frame, columns=columns, show='headings', height=10)
+        # === ИСПРАВЛЕНИЕ: правильная упаковка Treeview и Scrollbar ===
+        full_history_frame = ttk.Frame(frame)
+        full_history_frame.pack(side='top', fill='both', expand=True, padx=10, pady=5)
+
+        self.full_history_tree = ttk.Treeview(full_history_frame, columns=columns, show='headings', height=10)
         for col in columns:
             self.full_history_tree.heading(col, text=col)
-            self.full_history_tree.column(col, width=180 if col == "Сотрудник" else 150, anchor='center')
+            if col == "Сотрудник":
+                width = 180
+            elif col == "Модель":
+                width = 200
+            else:
+                width = 150
+            self.full_history_tree.column(col, width=width, anchor='center')
 
-        scrollbar2 = ttk.Scrollbar(frame, orient="vertical", command=self.full_history_tree.yview)
+        scrollbar2 = ttk.Scrollbar(full_history_frame, orient="vertical", command=self.full_history_tree.yview)
         self.full_history_tree.configure(yscrollcommand=scrollbar2.set)
-        self.full_history_tree.pack(side='top', fill='both', expand=True, padx=10, pady=5)
-        scrollbar2.pack(side='right', fill='y', pady=5)
+        self.full_history_tree.pack(side='left', fill='both', expand=True)
+        scrollbar2.pack(side='right', fill='y')
 
         self.full_history_context_menu = tk.Menu(self.full_history_tree, tearoff=0)
         self.full_history_context_menu.add_command(label="🗑️ Удалить запись", command=self.delete_history_record)
@@ -1084,7 +1337,15 @@ class InventoryApp:
 
         export_hist_btn = ttk.Button(frame, text="📥 Экспорт всей истории в Excel",
                                      command=self.export_history_to_excel, style='Small.TButton')
-        export_hist_btn.pack(pady=10)
+        export_hist_btn.pack(side='left', padx=5, pady=10)
+
+        # === ДОБАВЛЕНА КНОПКА "НАЧАЛЬНОЕ ЗАПОЛНЕНИЕ" С ПОЯСНЕНИЕМ ===
+        init_history_btn = ttk.Button(frame, text="🔄 Начальное заполнение",
+                                      command=self.initialize_history_from_inventory, style='Small.TButton')
+        init_history_btn.pack(side='left', padx=5, pady=10)
+
+        hint_label = ttk.Label(frame, text="Нажимаем только при первом запуске программы!", foreground="gray", font=('Arial', 10))
+        hint_label.pack(side='left', padx=5, pady=10)
 
         self.show_full_history()
         self.update_serial_combobox()
@@ -1097,6 +1358,7 @@ class InventoryApp:
             return
         for serial, records in self.history_data.items():
             eq_type = "-"
+            model = self._get_model_by_serial(serial)
             for inv_item in self.inventory_data:
                 if inv_item.get('serial_number') == serial:
                     eq_type = inv_item.get('equipment_type', '-')
@@ -1105,6 +1367,7 @@ class InventoryApp:
                 if record.get("assignment") == employee:
                     self.history_tree.insert("", "end", values=(
                         eq_type,
+                        model,
                         serial,
                         record["assignment"],
                         record["date"]
@@ -1115,6 +1378,7 @@ class InventoryApp:
             self.full_history_tree.delete(item)
         for serial, records in self.history_data.items():
             eq_type = "-"
+            model = self._get_model_by_serial(serial)
             for inv_item in self.inventory_data:
                 if inv_item.get('serial_number') == serial:
                     eq_type = inv_item.get('equipment_type', '-')
@@ -1122,6 +1386,7 @@ class InventoryApp:
             for record in records:
                 self.full_history_tree.insert("", "end", values=(
                     eq_type,
+                    model,
                     serial,
                     record["assignment"],
                     record["date"]
@@ -1141,9 +1406,9 @@ class InventoryApp:
         if not messagebox.askyesno("Подтверждение", "Удалить выбранную запись из истории?"):
             return
         values = self.full_history_tree.item(selected[0], 'values')
-        serial = values[1]
-        assignment = values[2]
-        date = values[3]
+        serial = values[2]
+        assignment = values[3]
+        date = values[4]
         if serial in self.history_data:
             self.history_data[serial] = [
                 rec for rec in self.history_data[serial]
@@ -1158,7 +1423,8 @@ class InventoryApp:
     def get_filtered_serial_numbers(self):
         selected_type = self.history_type_var.get()
         if not selected_type:
-            serials = sorted(set(item.get('serial_number', '') for item in self.inventory_data if item.get('serial_number')))
+            serials = sorted(
+                set(item.get('serial_number', '') for item in self.inventory_data if item.get('serial_number')))
         else:
             serials = sorted(set(item.get('serial_number', '') for item in self.inventory_data
                                  if item.get('equipment_type') == selected_type and item.get('serial_number')))
@@ -1180,6 +1446,7 @@ class InventoryApp:
                 self.history_tree.delete(item)
             return
         eq_type = "-"
+        model = self._get_model_by_serial(serial)
         for item in self.inventory_data:
             if item.get('serial_number') == serial:
                 eq_type = item.get('equipment_type', '-')
@@ -1190,37 +1457,22 @@ class InventoryApp:
         for record in history_list:
             self.history_tree.insert("", "end", values=(
                 eq_type,
+                model,
                 serial,
                 record["assignment"],
                 record["date"]
             ))
 
-    def export_history_to_excel(self):
-        if not self.history_data:
-            messagebox.showwarning("Предупреждение", "История пуста")
-            return
+    # =============== ЭКСПОРТ В EXCEL (общая функция) ===============
+    def _export_to_excel(self, rows: List[Dict[str, Any]], filename_title: str, initial_dir: Path):
         try:
             import pandas as pd
-            rows = []
-            for serial, records in self.history_data.items():
-                eq_type = "-"
-                for item in self.inventory_data:
-                    if item.get('serial_number') == serial:
-                        eq_type = item.get('equipment_type', '-')
-                        break
-                for record in records:
-                    rows.append({
-                        "Тип оборудования": eq_type,
-                        "Серийный номер": serial,
-                        "Сотрудник": record["assignment"],
-                        "Дата закрепления": record["date"]
-                    })
             df = pd.DataFrame(rows)
             filename = filedialog.asksaveasfilename(
                 defaultextension=".xlsx",
                 filetypes=[("Excel files", "*.xlsx")],
-                title="Сохранить историю в Excel",
-                initialdir=self.data_dir
+                title=filename_title,
+                initialdir=initial_dir
             )
             if not filename:
                 return
@@ -1241,81 +1493,155 @@ class InventoryApp:
                 ws.column_dimensions[column].width = adjusted_width
             wb.save(filename)
             webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"История экспортирована:\n{filename}")
+            messagebox.showinfo("Успех", f"Файл сохранён:\n{filename}")
         except ImportError:
-            messagebox.showerror("Ошибка", "Отсутствует модуль openpyxl. Установите его через pip:\npip install openpyxl")
+            messagebox.showerror("Ошибка", "Установите openpyxl: pip install openpyxl")
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось экспортировать историю в Excel:\n{e}")
+            messagebox.showerror("Ошибка", f"Не удалось экспортировать:\n{e}")
+
+    def export_history_to_excel(self):
+        if not self.history_data:
+            messagebox.showwarning("Предупреждение", "История пуста")
+            return
+        rows = []
+        for serial, records in self.history_data.items():
+            eq_type = "-"
+            model = self._get_model_by_serial(serial)
+            for item in self.inventory_data:
+                if item.get('serial_number') == serial:
+                    eq_type = item.get('equipment_type', '-')
+                    break
+            for record in records:
+                rows.append({
+                    "Тип оборудования": eq_type,
+                    "Модель": model,
+                    "Серийный номер": serial,
+                    "Сотрудник": record["assignment"],
+                    "Дата закрепления": record["date"]
+                })
+        self._export_to_excel(rows, "Сохранить историю в Excel", self.data_dir)
 
     def export_filtered_history_to_excel(self):
         items = self.history_tree.get_children()
         if not items:
             messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
             return
-        try:
-            import pandas as pd
-            rows = []
-            for item in items:
-                values = self.history_tree.item(item, 'values')
-                rows.append({
-                    "Тип оборудования": values[0],
-                    "Серийный номер": values[1],
-                    "Сотрудник": values[2],
-                    "Дата закрепления": values[3]
-                })
-            df = pd.DataFrame(rows)
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".xlsx",
-                filetypes=[("Excel files", "*.xlsx")],
-                title="Сохранить отфильтрованную историю в Excel",
-                initialdir=self.data_dir
-            )
-            if not filename:
-                return
-            df.to_excel(filename, index=False, engine='openpyxl')
-            from openpyxl import load_workbook
-            wb = load_workbook(filename)
-            ws = wb.active
-            for col in ws.columns:
-                max_length = 0
-                column = col[0].column_letter
-                for cell in col:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = (max_length + 2)
-                ws.column_dimensions[column].width = adjusted_width
-            wb.save(filename)
-            webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"Отфильтрованная история экспортирована:\n{filename}")
-        except ImportError:
-            messagebox.showerror("Ошибка", "Отсутствует модуль openpyxl. Установите его через pip:\npip install openpyxl")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось экспортировать в Excel:\n{e}")
+        rows = []
+        for item in items:
+            values = self.history_tree.item(item, 'values')
+            rows.append({
+                "Тип оборудования": values[0],
+                "Модель": values[1],
+                "Серийный номер": values[2],
+                "Сотрудник": values[3],
+                "Дата закрепления": values[4]
+            })
+        self._export_to_excel(rows, "Сохранить отфильтрованную историю в Excel", self.data_dir)
 
-    def export_filtered_history_to_pdf(self):
-        items = self.history_tree.get_children()
+    def export_employees_to_excel(self):
+        if not self.employees_list:
+            messagebox.showwarning("Предупреждение", "Список сотрудников пуст")
+            return
+        rows = [{"Сотрудник": emp} for emp in sorted(self.employees_list)]
+        self._export_to_excel(rows, "Сохранить список сотрудников", self.data_dir)
+
+    def export_search_results_to_excel(self):
+        items = self.search_tree.get_children()
         if not items:
             messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
             return
+        rows = []
+        for item in items:
+            values = self.search_tree.item(item, 'values')
+            rows.append({
+                "Тип": values[0],
+                "Модель": values[1],
+                "Серийный номер": values[2],
+                "Закрепление": values[3],
+                "Дата": values[4],
+                "Комментарии": values[5]
+            })
+        self._export_to_excel(rows, "Сохранить результаты поиска в Excel", self.data_dir)
+
+    def export_employee_results_to_excel(self):
+        items = self.employee_tree.get_children()
+        if not items:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+        rows = []
+        for item in items:
+            values = self.employee_tree.item(item, 'values')
+            rows.append({
+                "Тип": values[0],
+                "Модель": values[1],
+                "Серийный номер": values[2],
+                "Дата": values[3],
+                "Комментарии": values[4]
+            })
+        self._export_to_excel(rows, "Сохранить отчёт по сотруднику в Excel", self.data_dir)
+
+    def export_transfers_to_excel(self):
+        items = self.transfers_tree.get_children()
+        if not items:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+        rows = []
+        for item in items:
+            values = self.transfers_tree.item(item, 'values')
+            rows.append({
+                "Тип": values[0],
+                "Серийный номер": values[1],
+                "От кого": values[2],
+                "Кому": values[3],
+                "Дата передачи": values[4]
+            })
+        self._export_to_excel(rows, "Сохранить отчёт по передачам", self.data_dir)
+
+    def export_to_excel(self):
+        if not self.inventory_data:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+        active_tab = self.notebook.index(self.notebook.select())
+        if active_tab == 0:
+            current_data = []
+            for item in self.all_tree.get_children():
+                values = self.all_tree.item(item, 'values')
+                current_data.append({
+                    'Тип': values[0],
+                    'Модель': values[1],
+                    'Серийный номер': values[2],
+                    'Закрепление': values[3],
+                    'Дата': values[4],
+                    'Комментарии': values[5]
+                })
+            data_to_export = current_data
+        else:
+            data_to_export = [
+                {
+                    'Тип': item.get('equipment_type', ''),
+                    'Модель': item.get('model', ''),
+                    'Серийный номер': item.get('serial_number', ''),
+                    'Закрепление': item.get('assignment', ''),
+                    'Дата': item.get('date', ''),
+                    'Комментарии': item.get('comments', '')
+                }
+                for item in self.inventory_data
+            ]
+        self._export_to_excel(data_to_export, "Сохранить отчет в Excel", self.data_dir)
+
+    # =============== ЭКСПОРТ В PDF (общая функция) ===============
+    def _export_to_pdf(self, title: str, columns: List[str], data_rows: List[List[str]], subtitle: str = ""):
         try:
-            font_path = self._get_asset_path('ChakraPetch-Regular.ttf')
-            if not os.path.exists(font_path):
-                font_path = self._get_asset_path('assets/fonts/ChakraPetch-Regular.ttf')
-                if not os.path.exists(font_path):
-                    messagebox.showerror("Ошибка",
-                                         "Отсутствует файл шрифта: ChakraPetch-Regular.ttf\nПроверьте, что файл находится в корне проекта или в папке assets/fonts/")
-                    return
+            font_path = _get_asset_path('ChakraPetch-Regular.ttf')
             pdf = PDFWithCyrillic(orientation='L')
             pdf.set_auto_page_break(auto=True, margin=15)
             pdf.add_page()
-            pdf.set_font("ChakraPetch", '', 14)
-            pdf.cell(0, 10, "Отчет по истории (по фильтру)", 0, 1, 'C')
+            pdf.set_font("ChakraPetch", '', 18)
+            pdf.cell(0, 10, title, 0, 1, 'C')
+            if subtitle:
+                pdf.set_font("ChakraPetch", '', 12)
+                pdf.cell(0, 10, subtitle, 0, 1, 'C')
             pdf.ln(10)
-            columns = ["Тип оборудования", "Серийный номер", "Сотрудник", "Дата закрепления"]
-            data_rows = [self.history_tree.item(item, 'values') for item in items]
             pdf.set_font("ChakraPetch", '', 12)
             col_widths = []
             for col_index in range(len(columns)):
@@ -1337,40 +1663,118 @@ class InventoryApp:
             filename = filedialog.asksaveasfilename(
                 defaultextension=".pdf",
                 filetypes=[("PDF files", "*.pdf")],
-                title="Сохранить отфильтрованную историю в PDF",
+                title="Сохранить отчёт в PDF",
                 initialdir=self.data_dir
             )
             if not filename:
                 return
             pdf.output(filename)
             webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"Отчет сохранен:\n{filename}")
+            messagebox.showinfo("Успех", f"Отчёт сохранён:\n{filename}")
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось создать PDF отчет: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось создать PDF отчёт: {e}")
+
+    def export_to_pdf(self):
+        if not self.inventory_data:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+        active_tab = self.notebook.index(self.notebook.select())
+        if active_tab == 0:
+            data_rows = []
+            for item in self.all_tree.get_children():
+                values = self.all_tree.item(item, 'values')
+                row = [
+                    values[0] or '-',
+                    values[1] or '-',
+                    values[2] or '-',
+                    values[3] or '-',
+                    values[4] or '-',
+                    (values[5][:50] + '...') if values[5] and len(values[5]) > 50 else (values[5] or '-')
+                ]
+                data_rows.append(row)
+        else:
+            data_rows = []
+            for item in self.inventory_data:
+                row = [
+                    item.get('equipment_type', '') or '-',
+                    item.get('model', '') or '-',
+                    item.get('serial_number', '') or '-',
+                    item.get('assignment', '') or '-',
+                    item.get('date', '') or '-',
+                    (item.get('comments', '')[:50] + '...') if item.get('comments') and len(
+                        item.get('comments')) > 50 else (item.get('comments', '') or '-')
+                ]
+                data_rows.append(row)
+        total_equipment = len(self.inventory_data)
+        unique_employees = len(
+            set(item.get('assignment', '') for item in self.inventory_data if item.get('assignment')))
+        subtitle = f"Всего единиц: {total_equipment} | Сотрудников: {unique_employees} | {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        self._export_to_pdf("Полный отчет по инвентаризации оборудования",
+                            ["Тип", "Модель", "Серийный номер", "Закрепление", "Дата", "Комментарии"],
+                            data_rows, subtitle)
+
+    def export_search_results_to_pdf(self):
+        items = self.search_tree.get_children()
+        if not items:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+        data_rows = [list(self.search_tree.item(item, 'values')) for item in items]
+        self._export_to_pdf("Отчет по результатам поиска оборудования",
+                            ["Тип", "Модель", "Серийный номер", "Закрепление", "Дата", "Комментарии"],
+                            data_rows)
+
+    def export_employee_results_to_pdf(self):
+        items = self.employee_tree.get_children()
+        if not items:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+        employee_name = self.employee_var.get()
+        data_rows = [list(self.employee_tree.item(item, 'values')) for item in items]
+        self._export_to_pdf(f"Отчет по оборудованию сотрудника: {employee_name}",
+                            ["Тип", "Модель", "Серийный номер", "Дата", "Комментарии"],
+                            data_rows)
+
+    def export_filtered_history_to_pdf(self):
+        items = self.history_tree.get_children()
+        if not items:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+        data_rows = [list(self.history_tree.item(item, 'values')) for item in items]
+        self._export_to_pdf("Отчет по истории (по фильтру)",
+                            ["Тип оборудования", "Модель", "Серийный номер", "Сотрудник", "Дата закрепления"],
+                            data_rows)
+
+    def export_transfers_to_pdf(self):
+        items = self.transfers_tree.get_children()
+        if not items:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
+            return
+        start = self.transfers_start_var.get()
+        end = self.transfers_end_var.get()
+        subtitle = f"Период: с {start} по {end}"
+        data_rows = [list(self.transfers_tree.item(item, 'values')) for item in items]
+        self._export_to_pdf("Отчёт по передачам оборудования",
+                            ["Тип", "Серийный номер", "От кого", "Кому", "Дата передачи"],
+                            data_rows, subtitle)
 
     def create_about_tab(self):
         center_frame = ttk.Frame(self.about_frame)
         center_frame.pack(expand=True, fill='both')
-        info_text = """
-        Система инвентаризации оборудования
-        Версия: 1.2 (с поддержкой settings.json)
-        Разработано: Разин Григорий
-        Контактная информация:
-        Email: lantester35@gmail.com
-        Функционал:
-        - Ведение учета оборудования
-        - Поиск и фильтрация данных
-        - Экспорт отчетов в PDF и Excel
-        - Управление закреплением за сотрудниками
-        - Управление типами оборудования
-        - Настройка пути к каталогу данных через settings.json
-        - Удаление записей (правый клик или кнопка удаления)
-        - График распределения типов оборудования
-        - История закреплений оборудования
-        - Автосохранение каждые 5 минут
-        - Резервное копирование всех JSON-файлов
-        """
-        about_text = scrolledtext.ScrolledText(center_frame, width=60, height=15,
+        info_text = """Система инвентаризации оборудования — Inventory версия 2.0
+        Разработано: Разин Григорий   Email: lantester35@gmail.com
+        Программа предназначена для учёта и управления парком компьютерного оборудования:
+        - Добавление, редактирование и удаление записей об оборудовании (тип, модель, серийный номер и т.д.)
+        - Закрепление оборудования за сотрудниками
+        - Ведение истории передач оборудования между сотрудниками
+        - Экспорт данных в Excel и PDF
+        - Генерация отчётов по передачам за заданный период
+        - Визуализация статистики по типам оборудования
+        - Автоматическое резервное копирование
+        🔹 ВАЖНО ПРИ ПЕРВОМ ЗАПУСКЕ:
+        1. На вкладке «Сотрудники» нажмите кнопку «📥 Из базы» — она загрузит всех сотрудников из существующих записей в инвентаризации.
+        2. На вкладке «История» нажмите кнопку «🔄 Начальное заполнение» — она создаст историю первоначального закрепления оборудования на основе данных из inventory.json.
+        Эти действия нужно выполнить один раз, чтобы система корректно заполнила справочники и историю. В дальнейшем они не требуются."""
+        about_text = scrolledtext.ScrolledText(center_frame, width=100, height=17,
                                                font=self.default_font, wrap=tk.WORD)
         about_text.insert('1.0', info_text)
         about_text.config(state='disabled')
@@ -1381,17 +1785,22 @@ class InventoryApp:
         control_frame = ttk.LabelFrame(frame, text="Задайте период", padding=10)
         control_frame.pack(fill='x', padx=10, pady=10)
 
-        ttk.Label(control_frame, text="Дата начала (дд.мм.гггг):", font=self.default_font).grid(row=0, column=0, sticky='w', padx=(0, 10))
+        ttk.Label(control_frame, text="Дата начала (дд.мм.гггг):", font=self.default_font).grid(row=0, column=0,
+                                                                                                sticky='w',
+                                                                                                padx=(0, 10))
         self.transfers_start_var = tk.StringVar(value=datetime.now().strftime("%d.%m.%Y"))
         start_entry = ttk.Entry(control_frame, textvariable=self.transfers_start_var, width=12, font=self.default_font)
         start_entry.grid(row=0, column=1, padx=(0, 20))
 
-        ttk.Label(control_frame, text="Дата окончания (дд.мм.гггг):", font=self.default_font).grid(row=0, column=2, sticky='w', padx=(0, 10))
+        ttk.Label(control_frame, text="Дата окончания (дд.мм.гггг):", font=self.default_font).grid(row=0, column=2,
+                                                                                                   sticky='w',
+                                                                                                   padx=(0, 10))
         self.transfers_end_var = tk.StringVar(value=datetime.now().strftime("%d.%m.%Y"))
         end_entry = ttk.Entry(control_frame, textvariable=self.transfers_end_var, width=12, font=self.default_font)
         end_entry.grid(row=0, column=3, padx=(0, 20))
 
-        gen_btn = ttk.Button(control_frame, text="Сформировать отчёт", command=self.generate_transfers_report, style='Small.TButton')
+        gen_btn = ttk.Button(control_frame, text="Сформировать отчёт", command=self.generate_transfers_report,
+                             style='Small.TButton')
         gen_btn.grid(row=0, column=4, padx=(10, 0))
 
         result_frame = ttk.LabelFrame(frame, text="Результаты", padding=10)
@@ -1410,8 +1819,10 @@ class InventoryApp:
 
         export_frame = ttk.Frame(frame)
         export_frame.pack(fill='x', padx=10, pady=5)
-        ttk.Button(export_frame, text="📥 Экспорт в Excel", command=self.export_transfers_to_excel, style='Small.TButton').pack(side='left', padx=5)
-        ttk.Button(export_frame, text="📄 Экспорт в PDF", command=self.export_transfers_to_pdf, style='Small.TButton').pack(side='left', padx=5)
+        ttk.Button(export_frame, text="📥 Экспорт в Excel", command=self.export_transfers_to_excel,
+                   style='Small.TButton').pack(side='left', padx=5)
+        ttk.Button(export_frame, text="📄 Экспорт в PDF", command=self.export_transfers_to_pdf,
+                   style='Small.TButton').pack(side='left', padx=5)
 
     def generate_transfers_report(self):
         try:
@@ -1430,30 +1841,57 @@ class InventoryApp:
             self.transfers_tree.delete(item)
 
         transfers = []
-        for serial, records in self.history_data.items():
-            valid_records = [r for r in records if r.get("assignment") and r.get("date")]
-            if len(valid_records) < 2:
+        for item in self.inventory_data:
+            serial = item.get('serial_number')
+            if not serial:
                 continue
-            sorted_records = sorted(
-                valid_records,
+            # Собираем полную историю: начальное закрепление + history
+            full_history = []
+            # Добавляем первоначальное закрепление из inventory.json
+            first_assignment = item.get('assignment')
+            first_date = item.get('date')
+            if first_assignment and first_date:
+                try:
+                    datetime.strptime(first_date, "%d.%m.%Y")
+                    full_history.append({"assignment": first_assignment, "date": first_date})
+                except ValueError:
+                    pass  # некорректная дата — пропускаем
+            # Добавляем записи из history.json
+            history_records = self.history_data.get(serial, [])
+            for rec in history_records:
+                if rec.get("assignment") and rec.get("date"):
+                    try:
+                        datetime.strptime(rec["date"], "%d.%m.%Y")
+                        full_history.append(rec)
+                    except ValueError:
+                        continue
+            # Убираем дубликаты и сортируем по дате
+            seen = set()
+            unique_history = []
+            for rec in full_history:
+                key = (rec["assignment"], rec["date"])
+                if key not in seen:
+                    seen.add(key)
+                    unique_history.append(rec)
+            if len(unique_history) < 2:
+                continue
+            sorted_history = sorted(
+                unique_history,
                 key=lambda x: datetime.strptime(x["date"], "%d.%m.%Y")
             )
-            for i in range(1, len(sorted_records)):
-                prev_emp = sorted_records[i - 1]["assignment"]
-                curr_emp = sorted_records[i]["assignment"]
-                transfer_date_str = sorted_records[i]["date"]
-                try:
-                    transfer_date = datetime.strptime(transfer_date_str, "%d.%m.%Y")
-                except:
-                    continue
+            # Формируем передачи: от предыдущего к текущему
+            for i in range(1, len(sorted_history)):
+                prev_emp = sorted_history[i - 1]["assignment"]
+                curr_emp = sorted_history[i]["assignment"]
+                transfer_date_str = sorted_history[i]["date"]
                 if prev_emp == curr_emp:
                     continue
+                try:
+                    transfer_date = datetime.strptime(transfer_date_str, "%d.%m.%Y")
+                except ValueError:
+                    continue
                 if start_dt <= transfer_date <= end_dt:
-                    eq_type = "-"
-                    for inv_item in self.inventory_data:
-                        if inv_item.get("serial_number") == serial:
-                            eq_type = inv_item.get("equipment_type", "-")
-                            break
+                    eq_type = item.get("equipment_type", "-")
                     transfers.append({
                         "equipment_type": eq_type,
                         "serial": serial,
@@ -1466,6 +1904,8 @@ class InventoryApp:
             messagebox.showinfo("Информация", "В указанный период передач оборудования не найдено.")
             return
 
+        # Сортируем по дате передачи
+        transfers.sort(key=lambda x: datetime.strptime(x["date"], "%d.%m.%Y"))
         for tr in transfers:
             self.transfers_tree.insert("", "end", values=(
                 tr["equipment_type"],
@@ -1475,126 +1915,14 @@ class InventoryApp:
                 tr["date"]
             ))
 
-    def export_transfers_to_excel(self):
-        items = self.transfers_tree.get_children()
-        if not items:
-            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-            return
-        try:
-            import pandas as pd
-            rows = []
-            for item in items:
-                values = self.transfers_tree.item(item, 'values')
-                rows.append({
-                    "Тип": values[0],
-                    "Серийный номер": values[1],
-                    "От кого": values[2],
-                    "Кому": values[3],
-                    "Дата передачи": values[4]
-                })
-            df = pd.DataFrame(rows)
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".xlsx",
-                filetypes=[("Excel files", "*.xlsx")],
-                title="Сохранить отчёт по передачам",
-                initialdir=self.data_dir
-            )
-            if not filename:
-                return
-            df.to_excel(filename, index=False, engine='openpyxl')
-            from openpyxl import load_workbook
-            wb = load_workbook(filename)
-            ws = wb.active
-            for col in ws.columns:
-                max_length = 0
-                column = col[0].column_letter
-                for cell in col:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = (max_length + 2)
-                ws.column_dimensions[column].width = adjusted_width
-            wb.save(filename)
-            webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"Отчёт сохранён:\n{filename}")
-        except ImportError:
-            messagebox.showerror("Ошибка", "Установите openpyxl: pip install openpyxl")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось экспортировать:\n{e}")
-
-    def export_transfers_to_pdf(self):
-        items = self.transfers_tree.get_children()
-        if not items:
-            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-            return
-        try:
-            font_path = self._get_asset_path('ChakraPetch-Regular.ttf')
-            if not os.path.exists(font_path):
-                font_path = self._get_asset_path('assets/fonts/ChakraPetch-Regular.ttf')
-                if not os.path.exists(font_path):
-                    messagebox.showerror("Ошибка",
-                                         "Отсутствует файл шрифта: ChakraPetch-Regular.ttf\nПроверьте, что файл находится в корне проекта или в папке assets/fonts/")
-                    return
-            pdf = PDFWithCyrillic(orientation='L')
-            pdf.set_auto_page_break(auto=True, margin=15)
-            pdf.add_page()
-            pdf.set_font("ChakraPetch", '', 14)
-            pdf.cell(0, 10, "Отчёт по передачам оборудования", 0, 1, 'C')
-            pdf.ln(5)
-            start = self.transfers_start_var.get()
-            end = self.transfers_end_var.get()
-            pdf.cell(0, 10, f"Период: с {start} по {end}", 0, 1, 'C')
-            pdf.ln(10)
-            columns = ["Тип", "Серийный номер", "От кого", "Кому", "Дата передачи"]
-            data_rows = [self.transfers_tree.item(item, 'values') for item in items]
-            pdf.set_font("ChakraPetch", '', 12)
-            col_widths = []
-            for col_index in range(len(columns)):
-                max_width = pdf.get_string_width(columns[col_index]) + 6
-                for row in data_rows:
-                    w = pdf.get_string_width(str(row[col_index])) + 6
-                    if w > max_width:
-                        max_width = w
-                col_widths.append(max_width)
-            pdf.set_font("ChakraPetch", '', 14)
-            for i, col in enumerate(columns):
-                pdf.cell(col_widths[i], 10, col, 1, new_x="RIGHT", new_y="TOP", align='C')
-            pdf.ln()
-            pdf.set_font("ChakraPetch", '', 12)
-            for row in data_rows:
-                for i, cell_text in enumerate(row):
-                    pdf.cell(col_widths[i], 10, str(cell_text), 1, new_x="RIGHT", new_y="TOP")
-                pdf.ln()
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".pdf",
-                filetypes=[("PDF files", "*.pdf")],
-                title="Сохранить отчёт по передачам в PDF",
-                initialdir=self.data_dir
-            )
-            if not filename:
-                return
-            pdf.output(filename)
-            webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"Отчёт сохранён:\n{filename}")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось создать PDF отчёт: {e}")
-
     def treeview_sort_column(self, tree, col, reverse):
         date_columns = ['Дата']
-        int_columns = []
         def sort_key(val):
             if col in date_columns:
                 try:
                     return datetime.strptime(val, "%d.%m.%Y")
                 except:
                     return datetime.min
-            elif col in int_columns:
-                try:
-                    return int(val)
-                except:
-                    return -1
             else:
                 return val.lower() if isinstance(val, str) else val
         data = [(tree.set(k, col), k) for k in tree.get_children('')]
@@ -1615,15 +1943,10 @@ class InventoryApp:
             elif tree == self.all_tree:
                 self.all_context_menu.post(event.x_root, event.y_root)
 
-    def delete_selected_item(self):
+    def delete_selected_item(self, event=None):
         current_tab = self.notebook.index(self.notebook.select())
-        if current_tab == 1:
-            tree = self.search_tree
-        elif current_tab == 2:
-            tree = self.employee_tree
-        elif current_tab == 0:
-            tree = self.all_tree
-        else:
+        tree = {0: self.all_tree, 2: self.search_tree, 3: self.employee_tree}.get(current_tab)
+        if not tree:
             return
         selected_items = tree.selection()
         if not selected_items:
@@ -1655,12 +1978,19 @@ class InventoryApp:
                 equipment_data[field_name] = entry.get("1.0", tk.END).strip()
             else:
                 equipment_data[field_name] = entry.get().strip()
+
         if not equipment_data.get('equipment_type') or not equipment_data.get('serial_number'):
             messagebox.showwarning("Предупреждение", "Заполните обязательные поля: Тип оборудования и Серийный номер")
             return
+
         if equipment_data['equipment_type'] not in self.equipment_types:
             messagebox.showwarning("Предупреждение", "Выбранный тип оборудования не существует в списке.")
             return
+
+        if not self.is_serial_number_unique(equipment_data['serial_number']):
+            messagebox.showerror("Ошибка", f"Серийный номер '{equipment_data['serial_number']}' уже существует!")
+            return
+
         equipment_data['created_datetime'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.inventory_data.append(equipment_data)
         self.add_to_history(equipment_data['serial_number'], equipment_data['assignment'], equipment_data['date'])
@@ -1695,11 +2025,6 @@ class InventoryApp:
             matches_search = any(search_text in str(value).lower() for value in item.values() if value)
             matches_employee = (not selected_employee) or (item.get('assignment', '') == selected_employee)
             if matches_search and matches_employee:
-                idx = None
-                for i, inv_item in enumerate(self.inventory_data):
-                    if inv_item.get('serial_number') == item.get('serial_number'):
-                        idx = i
-                        break
                 self.search_tree.insert("", "end", values=(
                     item.get('equipment_type', ''),
                     item.get('model', ''),
@@ -1708,7 +2033,7 @@ class InventoryApp:
                     item.get('date', ''),
                     (item.get('comments', '')[:50] + '...') if item.get('comments') and len(
                         item.get('comments')) > 50 else item.get('comments', '')
-                ), tags=(str(idx),))
+                ))
 
     def clear_search(self):
         self.search_entry.delete(0, tk.END)
@@ -1717,7 +2042,8 @@ class InventoryApp:
             self.search_tree.delete(item)
 
     def update_history_combobox(self):
-        serials = sorted(set(item.get('serial_number', '') for item in self.inventory_data if item.get('serial_number')))
+        serials = sorted(
+            set(item.get('serial_number', '') for item in self.inventory_data if item.get('serial_number')))
         self.history_serial_combo['values'] = serials
         if serials:
             self.history_serial_combo_var.set(serials[0])
@@ -1754,7 +2080,7 @@ class InventoryApp:
                 item.get('date', ''),
                 (item.get('comments', '')[:50] + '...') if item.get('comments') and len(
                     item.get('comments')) > 50 else item.get('comments', '')
-            ), tags=(str(self.inventory_data.index(item)),))
+            ))
         self.refresh_employee_list()
         self.update_history_combobox()
         self.update_serial_combobox()
@@ -1769,25 +2095,23 @@ class InventoryApp:
         col_index = int(column.replace('#', '')) - 1
         current_values = tree.item(item, 'values')
         current_value = current_values[col_index]
-        if tree == self.employee_tree:
-            field_names = {0: 'equipment_type', 1: 'model', 2: 'serial_number', 3: 'date', 4: 'comments'}
-        elif tree == self.all_tree:
-            field_names = {0: 'equipment_type', 1: 'model', 2: 'serial_number', 3: 'assignment', 4: 'date', 5: 'comments'}
-        elif tree == self.search_tree:
-            field_names = {0: 'equipment_type', 1: 'model', 2: 'serial_number', 3: 'assignment', 4: 'date', 5: 'comments'}
-        else:
+        field_names_map = {
+            self.employee_tree: {0: 'equipment_type', 1: 'model', 2: 'serial_number', 3: 'date', 4: 'comments'},
+            self.all_tree: {0: 'equipment_type', 1: 'model', 2: 'serial_number', 3: 'assignment', 4: 'date',
+                            5: 'comments'},
+            self.search_tree: {0: 'equipment_type', 1: 'model', 2: 'serial_number', 3: 'assignment', 4: 'date',
+                               5: 'comments'}
+        }
+        field_names = field_names_map.get(tree)
+        if not field_names:
             return
         field_name = field_names.get(col_index)
         if not field_name:
             return
-        tags = tree.item(item, 'tags')
-        if not tags:
-            return
-        try:
-            idx = int(tags[0])
-            if idx < 0 or idx >= len(self.inventory_data):
-                return
-        except:
+        idx = next(
+            (i for i, inv_item in enumerate(self.inventory_data) if inv_item.get('serial_number') == current_values[2]),
+            None)
+        if idx is None:
             return
         self.edit_cell(tree, item, col_index, field_name, current_value, idx)
 
@@ -1795,25 +2119,46 @@ class InventoryApp:
         bbox = tree.bbox(item, column=f'#{col_index + 1}')
         if not bbox:
             return
+
+        def validate_and_save(new_value: str):
+            if field_name == 'date':
+                try:
+                    datetime.strptime(new_value, "%d.%m.%Y")
+                except ValueError:
+                    messagebox.showerror("Ошибка", "Неверный формат даты. Используйте дд.мм.гггг")
+                    return False
+            elif field_name == 'serial_number':
+                if not self.is_serial_number_unique(new_value, exclude_index=data_index):
+                    messagebox.showerror("Ошибка", f"Серийный номер '{new_value}' уже существует!")
+                    return False
+            return True
+
         if field_name == 'comments':
             text_edit = scrolledtext.ScrolledText(tree, width=40, height=4, font=self.default_font)
             text_edit.insert('1.0', current_value)
             text_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3] * 3)
             text_edit.focus()
             self.bind_clipboard_events(text_edit)
+
             def save_edit(event=None):
                 new_value = text_edit.get('1.0', tk.END).strip()
-                text_edit.destroy()
-                current_values = list(tree.item(item, 'values'))
-                current_values[col_index] = new_value
-                tree.item(item, values=current_values)
-                self.inventory_data[data_index][field_name] = new_value
-                self.save_data()
+                if validate_and_save(new_value):
+                    text_edit.destroy()
+                    current_values = list(tree.item(item, 'values'))
+                    current_values[col_index] = new_value
+                    tree.item(item, values=current_values)
+                    self.inventory_data[data_index][field_name] = new_value
+                    self.unsaved_changes = True
+                    self.update_window_title()
+                    self.save_data()
+
             def cancel_edit(event=None):
                 text_edit.destroy()
+
             text_edit.bind('<Return>', save_edit)
             text_edit.bind('<Escape>', cancel_edit)
             text_edit.bind('<FocusOut>', lambda e: save_edit())
+
         elif field_name == 'assignment':
             combo_edit = ttk.Combobox(
                 tree,
@@ -1825,209 +2170,57 @@ class InventoryApp:
             combo_edit.set(current_value)
             combo_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
             combo_edit.focus()
+
             def save_edit(event=None):
                 new_value = combo_edit.get().strip()
-                combo_edit.destroy()
-                current_values = list(tree.item(item, 'values'))
-                current_values[col_index] = new_value
-                tree.item(item, values=current_values)
-                old_value = current_value
-                self.inventory_data[data_index][field_name] = new_value
-                serial_number = self.inventory_data[data_index].get('serial_number', '')
-                if serial_number and old_value != new_value:
-                    current_date = datetime.now().strftime("%d.%m.%Y")
-                    self.add_to_history(serial_number, new_value, current_date)
-                self.save_data()
+                if validate_and_save(new_value):
+                    combo_edit.destroy()
+                    current_values = list(tree.item(item, 'values'))
+                    current_values[col_index] = new_value
+                    tree.item(item, values=current_values)
+                    old_value = current_value
+                    self.inventory_data[data_index][field_name] = new_value
+                    serial_number = self.inventory_data[data_index].get('serial_number', '')
+                    if serial_number and old_value != new_value:
+                        current_date = datetime.now().strftime("%d.%m.%Y")
+                        self.add_to_history(serial_number, new_value, current_date)
+                    self.unsaved_changes = True
+                    self.update_window_title()
+                    self.save_data()
+
             def cancel_edit(event=None):
                 combo_edit.destroy()
+
             combo_edit.bind('<Return>', save_edit)
             combo_edit.bind('<Escape>', cancel_edit)
             combo_edit.bind('<FocusOut>', lambda e: save_edit())
             combo_edit.bind('<<ComboboxSelected>>', lambda e: save_edit())
+
         else:
             entry_edit = ttk.Entry(tree, width=bbox[2] // 8, font=self.default_font)
             entry_edit.insert(0, current_value)
             entry_edit.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
             entry_edit.focus()
             self.bind_clipboard_events(entry_edit)
+
             def save_edit(event=None):
                 new_value = entry_edit.get().strip()
-                entry_edit.destroy()
-                current_values = list(tree.item(item, 'values'))
-                current_values[col_index] = new_value
-                tree.item(item, values=current_values)
-                self.inventory_data[data_index][field_name] = new_value
-                self.save_data()
+                if validate_and_save(new_value):
+                    entry_edit.destroy()
+                    current_values = list(tree.item(item, 'values'))
+                    current_values[col_index] = new_value
+                    tree.item(item, values=current_values)
+                    self.inventory_data[data_index][field_name] = new_value
+                    self.unsaved_changes = True
+                    self.update_window_title()
+                    self.save_data()
+
             def cancel_edit(event=None):
                 entry_edit.destroy()
+
             entry_edit.bind('<Return>', save_edit)
             entry_edit.bind('<Escape>', cancel_edit)
             entry_edit.bind('<FocusOut>', lambda e: save_edit())
-
-    def export_to_excel(self):
-        if not self.inventory_data:
-            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-            return
-        try:
-            import pandas as pd
-            active_tab = self.notebook.index(self.notebook.select())
-            if active_tab == 0:
-                current_data = []
-                for item in self.all_tree.get_children():
-                    values = self.all_tree.item(item, 'values')
-                    item_dict = {
-                        'equipment_type': values[0],
-                        'model': values[1],
-                        'serial_number': values[2],
-                        'assignment': values[3],
-                        'date': values[4],
-                        'comments': values[5]
-                    }
-                    current_data.append(item_dict)
-                data_to_export = current_data
-            else:
-                data_to_export = self.inventory_data
-            df = pd.DataFrame(data_to_export)
-            df = df.rename(columns={
-                'equipment_type': 'Тип',
-                'model': 'Модель',
-                'serial_number': 'Серийный номер',
-                'assignment': 'Закрепление',
-                'date': 'Дата',
-                'comments': 'Комментарии'
-            })
-            desired_order = ['Тип', 'Модель', 'Серийный номер', 'Закрепление', 'Дата', 'Комментарии']
-            df = df[desired_order]
-            df['Дата'] = pd.to_datetime(df['Дата'], format='%d.%m.%Y', errors='coerce')
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".xlsx",
-                filetypes=[("Excel files", "*.xlsx")],
-                title="Сохранить отчет в Excel",
-                initialdir=self.data_dir
-            )
-            if not filename:
-                return
-            df.to_excel(filename, index=False, engine='openpyxl')
-            from openpyxl import load_workbook
-            wb = load_workbook(filename)
-            ws = wb.active
-            for col in ws.columns:
-                max_length = 0
-                column = col[0].column_letter
-                for cell in col:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = (max_length + 2)
-                ws.column_dimensions[column].width = adjusted_width
-            wb.save(filename)
-            webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"Отчет сохранен:\n{filename}")
-        except ImportError:
-            messagebox.showerror("Ошибка", "Отсутствует модуль openpyxl. Установите его через pip:\npip install openpyxl")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось создать Excel отчет: {e}")
-
-    def export_search_results_to_excel(self):
-        items = self.search_tree.get_children()
-        if not items:
-            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-            return
-        try:
-            import pandas as pd
-            rows = []
-            for item in items:
-                values = self.search_tree.item(item, 'values')
-                rows.append({
-                    "Тип": values[0],
-                    "Модель": values[1],
-                    "Серийный номер": values[2],
-                    "Закрепление": values[3],
-                    "Дата": values[4],
-                    "Комментарии": values[5]
-                })
-            df = pd.DataFrame(rows)
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".xlsx",
-                filetypes=[("Excel files", "*.xlsx")],
-                title="Сохранить результаты поиска в Excel",
-                initialdir=self.data_dir
-            )
-            if not filename:
-                return
-            df.to_excel(filename, index=False, engine='openpyxl')
-            from openpyxl import load_workbook
-            wb = load_workbook(filename)
-            ws = wb.active
-            for col in ws.columns:
-                max_length = 0
-                column = col[0].column_letter
-                for cell in col:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = (max_length + 2)
-                ws.column_dimensions[column].width = adjusted_width
-            wb.save(filename)
-            webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"Результаты поиска экспортированы:\n{filename}")
-        except ImportError:
-            messagebox.showerror("Ошибка", "Отсутствует модуль openpyxl. Установите его через pip:\npip install openpyxl")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось экспортировать в Excel:\n{e}")
-
-    def export_employee_results_to_excel(self):
-        items = self.employee_tree.get_children()
-        if not items:
-            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-            return
-        try:
-            import pandas as pd
-            rows = []
-            for item in items:
-                values = self.employee_tree.item(item, 'values')
-                rows.append({
-                    "Тип": values[0],
-                    "Модель": values[1],
-                    "Серийный номер": values[2],
-                    "Дата": values[3],
-                    "Комментарии": values[4]
-                })
-            df = pd.DataFrame(rows)
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".xlsx",
-                filetypes=[("Excel files", "*.xlsx")],
-                title="Сохранить отчёт по сотруднику в Excel",
-                initialdir=self.data_dir
-            )
-            if not filename:
-                return
-            df.to_excel(filename, index=False, engine='openpyxl')
-            from openpyxl import load_workbook
-            wb = load_workbook(filename)
-            ws = wb.active
-            for col in ws.columns:
-                max_length = 0
-                column = col[0].column_letter
-                for cell in col:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = (max_length + 2)
-                ws.column_dimensions[column].width = adjusted_width
-            wb.save(filename)
-            webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"Отчёт по сотруднику экспортирован:\n{filename}")
-        except ImportError:
-            messagebox.showerror("Ошибка", "Отсутствует модуль openpyxl. Установите его через pip:\npip install openpyxl")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось экспортировать в Excel:\n{e}")
 
     def show_equipment_graph(self):
         if not self.inventory_data:
@@ -2064,235 +2257,17 @@ class InventoryApp:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось построить график: {e}")
 
-    def export_to_pdf(self):
-        if not self.inventory_data:
-            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-            return
-        try:
-            font_path = self._get_asset_path('ChakraPetch-Regular.ttf')
-            if not os.path.exists(font_path):
-                font_path = self._get_asset_path('assets/fonts/ChakraPetch-Regular.ttf')
-                if not os.path.exists(font_path):
-                    messagebox.showerror("Ошибка",
-                                         "Отсутствует файл шрифта: ChakraPetch-Regular.ttf\nПроверьте, что файл находится в корне проекта или в папке assets/fonts/")
-                    return
-            pdf = PDFWithCyrillic(orientation='L')
-            pdf.set_auto_page_break(auto=True, margin=15)
-            pdf.add_page()
-            pdf.set_font("ChakraPetch", '', 18)
-            pdf.cell(0, 10, "Полный отчет по инвентаризации оборудования", 0, 1, 'C')
-            pdf.ln(10)
-            pdf.set_font("ChakraPetch", '', 12)
-            pdf.cell(0, 10, f"Отчет сгенерирован: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}", 0, 1, 'R')
-            pdf.ln(5)
-            total_equipment = len(self.inventory_data)
-            unique_employees = len(set(item.get('assignment', '') for item in self.inventory_data if item.get('assignment')))
-            pdf.set_font("ChakraPetch", '', 14)
-            pdf.cell(0, 10, "Общая статистика:", 0, 1)
-            pdf.cell(0, 10, f"Всего единиц оборудования: {total_equipment}", 0, 1)
-            pdf.cell(0, 10, f"Количество сотрудников с оборудованием: {unique_employees}", 0, 1)
-            pdf.ln(10)
-            columns = ["Тип", "Модель", "Серийный номер", "Закрепление", "Дата", "Комментарии"]
-            data_rows = []
-            active_tab = self.notebook.index(self.notebook.select())
-            if active_tab == 0:
-                for item in self.all_tree.get_children():
-                    values = self.all_tree.item(item, 'values')
-                    row = [
-                        values[0] or '-',
-                        values[1] or '-',
-                        values[2] or '-',
-                        values[3] or '-',
-                        values[4] or '-',
-                        (values[5][:50] + '...') if values[5] and len(values[5]) > 50 else (values[5] or '-')
-                    ]
-                    data_rows.append(row)
-            else:
-                for item in self.inventory_data:
-                    row = [
-                        item.get('equipment_type', '') or '-',
-                        item.get('model', '') or '-',
-                        item.get('serial_number', '') or '-',
-                        item.get('assignment', '') or '-',
-                        item.get('date', '') or '-',
-                        (item.get('comments', '')[:50] + '...') if item.get('comments') and len(
-                            item.get('comments')) > 50 else (item.get('comments', '') or '-')
-                    ]
-                    data_rows.append(row)
-            pdf.set_font("ChakraPetch", '', 12)
-            col_widths = []
-            for col_index in range(len(columns)):
-                max_width = pdf.get_string_width(columns[col_index]) + 6
-                for row in data_rows:
-                    w = pdf.get_string_width(str(row[col_index])) + 6
-                    if w > max_width:
-                        max_width = w
-                col_widths.append(max_width)
-            pdf.set_font("ChakraPetch", '', 14)
-            for i, col in enumerate(columns):
-                pdf.cell(col_widths[i], 10, col, 1, new_x="RIGHT", new_y="TOP", align='C')
-            pdf.ln()
-            pdf.set_font("ChakraPetch", '', 12)
-            for row in data_rows:
-                for i, cell_text in enumerate(row):
-                    pdf.cell(col_widths[i], 10, str(cell_text), 1, new_x="RIGHT", new_y="TOP")
-                pdf.ln()
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".pdf",
-                filetypes=[("PDF files", "*.pdf")],
-                title="Сохранить отчет в PDF",
-                initialdir=self.data_dir
-            )
-            if not filename:
-                return
-            pdf.output(filename)
-            webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"Отчет сохранен:\n{filename}")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось создать PDF отчет: {e}")
-
-    def export_search_results_to_pdf(self):
-        items = self.search_tree.get_children()
-        if not items:
-            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-            return
-        try:
-            font_path = self._get_asset_path('ChakraPetch-Regular.ttf')
-            if not os.path.exists(font_path):
-                font_path = self._get_asset_path('assets/fonts/ChakraPetch-Regular.ttf')
-                if not os.path.exists(font_path):
-                    messagebox.showerror("Ошибка",
-                                         "Отсутствует файл шрифта: ChakraPetch-Regular.ttf\nПроверьте, что файл находится в корне проекта или в папке assets/fonts/")
-                    return
-            pdf = PDFWithCyrillic(orientation='L')
-            pdf.set_auto_page_break(auto=True, margin=15)
-            pdf.add_page()
-            pdf.set_font("ChakraPetch", '', 14)
-            pdf.cell(0, 10, "Отчет по результатам поиска оборудования", 0, 1, 'C')
-            pdf.ln(10)
-            columns = ["Тип", "Модель", "Серийный номер", "Закрепление", "Дата", "Комментарии"]
-            data_rows = [self.search_tree.item(item, 'values') for item in items]
-            pdf.set_font("ChakraPetch", '', 12)
-            col_widths = []
-            for col_index in range(len(columns)):
-                max_width = pdf.get_string_width(columns[col_index]) + 6
-                for row in data_rows:
-                    w = pdf.get_string_width(str(row[col_index])) + 6
-                    if w > max_width:
-                        max_width = w
-                col_widths.append(max_width)
-            pdf.set_font("ChakraPetch", '', 14)
-            for i, col in enumerate(columns):
-                pdf.cell(col_widths[i], 10, col, 1, new_x="RIGHT", new_y="TOP", align='C')
-            pdf.ln()
-            pdf.set_font("ChakraPetch", '', 12)
-            for row in data_rows:
-                for i, cell_text in enumerate(row):
-                    pdf.cell(col_widths[i], 10, str(cell_text), 1, new_x="RIGHT", new_y="TOP")
-                pdf.ln()
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".pdf",
-                filetypes=[("PDF files", "*.pdf")],
-                title="Сохранить отчет в PDF",
-                initialdir=self.data_dir
-            )
-            if not filename:
-                return
-            pdf.output(filename)
-            webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"Отчет сохранен:\n{filename}")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось создать PDF отчет: {e}")
-
-    def export_employee_results_to_pdf(self):
-        items = self.employee_tree.get_children()
-        if not items:
-            messagebox.showwarning("Предупреждение", "Нет данных для экспорта")
-            return
-        try:
-            font_path = self._get_asset_path('ChakraPetch-Regular.ttf')
-            if not os.path.exists(font_path):
-                font_path = self._get_asset_path('assets/fonts/ChakraPetch-Regular.ttf')
-                if not os.path.exists(font_path):
-                    messagebox.showerror("Ошибка",
-                                         "Отсутствует файл шрифта: ChakraPetch-Regular.ttf\nПроверьте, что файл находится в корне проекта или в папке assets/fonts/")
-                    return
-            pdf = PDFWithCyrillic(orientation='L')
-            pdf.set_auto_page_break(auto=True, margin=15)
-            pdf.add_page()
-            employee_name = self.employee_var.get()
-            pdf.set_font("ChakraPetch", '', 14)
-            pdf.cell(0, 10, f"Отчет по оборудованию сотрудника: {employee_name}", 0, 1, 'C')
-            pdf.ln(10)
-            columns = ["Тип", "Модель", "Серийный номер", "Дата", "Комментарии"]
-            data_rows = [self.employee_tree.item(item, 'values') for item in items]
-            pdf.set_font("ChakraPetch", '', 12)
-            col_widths = []
-            for col_index in range(len(columns)):
-                max_width = pdf.get_string_width(columns[col_index]) + 6
-                for row in data_rows:
-                    w = pdf.get_string_width(str(row[col_index])) + 6
-                    if w > max_width:
-                        max_width = w
-                col_widths.append(max_width)
-            pdf.set_font("ChakraPetch", '', 14)
-            for i, col in enumerate(columns):
-                pdf.cell(col_widths[i], 10, col, 1, new_x="RIGHT", new_y="TOP", align='C')
-            pdf.ln()
-            pdf.set_font("ChakraPetch", '', 12)
-            for row in data_rows:
-                for i, cell_text in enumerate(row):
-                    pdf.cell(col_widths[i], 10, str(cell_text), 1, new_x="RIGHT", new_y="TOP")
-                pdf.ln()
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".pdf",
-                filetypes=[("PDF files", "*.pdf")],
-                title="Сохранить отчет в PDF",
-                initialdir=self.data_dir
-            )
-            if not filename:
-                return
-            pdf.output(filename)
-            webbrowser.open(filename)
-            messagebox.showinfo("Успех", f"Отчет сохранен:\n{filename}")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось создать PDF отчет: {e}")
-
     def schedule_auto_save(self):
         def auto_save():
             if self.save_data():
-                print(f"[AUTO-SAVE] Данные сохранены в {datetime.now().strftime('%H:%M:%S')}")
+                logger.info("[AUTO-SAVE] Данные сохранены")
             self.root.after(self.auto_save_interval, auto_save)
         self.root.after(self.auto_save_interval, auto_save)
-
-    def _get_asset_path(self, filename):
-        if getattr(sys, 'frozen', False):
-            base_path = sys._MEIPASS
-            path1 = os.path.join(base_path, 'assets', 'fonts', filename)
-            path2 = os.path.join(base_path, filename)
-            if os.path.exists(path1):
-                return path1
-            elif os.path.exists(path2):
-                return path2
-            else:
-                raise FileNotFoundError(f"Шрифт не найден в MEIPASS: {filename}")
-        else:
-            base_path = os.path.dirname(__file__)
-            path1 = os.path.join(base_path, filename)
-            path2 = os.path.join(base_path, 'assets', 'fonts', filename)
-            if os.path.exists(path1):
-                return path1
-            elif os.path.exists(path2):
-                return path2
-            else:
-                raise FileNotFoundError(f"Шрифт не найден ни в корне проекта, ни в assets/fonts/: {filename}")
-
 
 def main():
     root = tk.Tk()
     app = InventoryApp(root)
     root.mainloop()
-
 
 if __name__ == "__main__":
     main()
