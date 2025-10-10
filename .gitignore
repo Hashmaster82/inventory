@@ -5,5 +5,7 @@ __pycache__/
 *.pyd
 *.swp
 *.DS_Store
+.venv
+.idea
 settings.json
 inventory_app.log
