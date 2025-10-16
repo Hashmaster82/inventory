@@ -123,7 +123,7 @@ class InventoryApp:
         # Клавиатурные сокращения
         self.root.bind('<Control-s>', lambda e: self.save_data() and self.mark_saved())
         self.root.bind('<Control-f>', lambda e: self.search_entry.focus_set())
-        self.root.bind('<Delete>', self.delete_selected_item)
+        # self.root.bind('<Delete>', self.delete_selected_item)
 
         # Статусная строка
         self.status_var = tk.StringVar(value="Готово")
@@ -1760,7 +1760,7 @@ class InventoryApp:
     def create_about_tab(self):
         center_frame = ttk.Frame(self.about_frame)
         center_frame.pack(expand=True, fill='both')
-        info_text = """Система инвентаризации оборудования — Inventory версия 2.0
+        info_text = """Система инвентаризации оборудования — Inventory версия 2.1
         Разработано: Разин Григорий   Email: lantester35@gmail.com
         Программа предназначена для учёта и управления парком компьютерного оборудования:
         - Добавление, редактирование и удаление записей об оборудовании (тип, модель, серийный номер и т.д.)
